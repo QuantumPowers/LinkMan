@@ -22,6 +22,33 @@ fi
 
 INSTALL_DIR="/home/$SERVICE_USER/linkman"
 
+# Progress tracking
+TOTAL_STEPS=6
+CURRENT_STEP=0
+ERROR_COUNT=0
+SUCCESS_COUNT=0
+
+# Function to print step header
+print_step() {
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    echo ""
+    echo "=========================================="
+    echo "  Step $CURRENT_STEP/$TOTAL_STEPS: $1"
+    echo "=========================================="
+}
+
+# Function to print success
+print_success() {
+    SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+    echo "✅ $1"
+}
+
+# Function to print error
+print_error() {
+    ERROR_COUNT=$((ERROR_COUNT + 1))
+    echo "❌ $1"
+}
+
 echo "=========================================="
 echo "  LinkMan Server Installation Script"
 echo "=========================================="
@@ -29,30 +56,45 @@ echo "Service user: $SERVICE_USER"
 echo "Installation directory: $INSTALL_DIR"
 
 if [ "$EUID" -ne 0 ]; then
-    echo "Please run with sudo"
+    print_error "Please run with sudo"
     echo "Example: sudo bash deploy/install.sh"
     exit 1
 fi
 
-echo "[1/6] Installing dependencies..."
-apt-get update
-apt-get install -y python3 python3-pip python3-venv nginx certbot
+print_step "Installing dependencies"
+if apt-get update && apt-get install -y python3 python3-pip python3-venv nginx certbot; then
+    print_success "Dependencies installed successfully"
+else
+    print_error "Failed to install dependencies"
+    exit 1
+fi
 
-echo "[2/6] Creating directories..."
-mkdir -p $INSTALL_DIR
-mkdir -p $INSTALL_DIR/data
-mkdir -p $INSTALL_DIR/logs
+print_step "Creating directories"
+if mkdir -p $INSTALL_DIR && mkdir -p $INSTALL_DIR/data && mkdir -p $INSTALL_DIR/logs; then
+    print_success "Directories created successfully"
+else
+    print_error "Failed to create directories"
+    exit 1
+fi
 
-echo "[3/6] Setting up Python virtual environment..."
-python3 -m venv $INSTALL_DIR/venv
-source $INSTALL_DIR/venv/bin/activate
+print_step "Setting up Python virtual environment"
+if python3 -m venv $INSTALL_DIR/venv; then
+    source $INSTALL_DIR/venv/bin/activate
+    print_success "Virtual environment created successfully"
+else
+    print_error "Failed to create virtual environment"
+    exit 1
+fi
 
-echo "[4/6] Installing LinkMan..."
-pip install --upgrade pip
-pip install -r requirements.txt
-pip install -e .
+print_step "Installing LinkMan"
+if pip install --upgrade pip && pip install -r requirements.txt && pip install -e .; then
+    print_success "LinkMan installed successfully"
+else
+    print_error "Failed to install LinkMan"
+    exit 1
+fi
 
-echo "[5/6] Creating configuration..."
+print_step "Creating configuration"
 if [ ! -f "$INSTALL_DIR/linkman.toml" ]; then
     cat > $INSTALL_DIR/linkman.toml << 'EOF'
 [server]
@@ -99,7 +141,9 @@ sed -i "s|/home/linkman/linkman/logs/linkman.log|/home/$SERVICE_USER/linkman/log
 KEY=$(python3 -c "from linkman.shared.crypto.keys import KeyManager; print(KeyManager().master_key_base64)")
 sed -i "s/^key = \"\"/key = \"$KEY\"/" $INSTALL_DIR/linkman.toml
 
-echo "[6/6] Installing systemd service..."
+print_success "Configuration created successfully"
+
+print_step "Installing systemd service"
 cat > /etc/systemd/system/linkman.service << EOF
 [Unit]
 Description=LinkMan VPN Server
@@ -118,25 +162,41 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
+if chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR && systemctl daemon-reload && systemctl enable linkman; then
+    print_success "Systemd service installed successfully"
+else
+    print_error "Failed to install systemd service"
+    exit 1
+fi
 
-systemctl daemon-reload
-systemctl enable linkman
-
+# Summary
 echo ""
 echo "=========================================="
-echo "  Installation Complete!"
+echo "  Installation Summary"
 echo "=========================================="
+echo "Total steps: $TOTAL_STEPS"
+echo "Success: $SUCCESS_COUNT"
+echo "Errors: $ERROR_COUNT"
+echo "Completion: $((SUCCESS_COUNT * 100 / TOTAL_STEPS))%"
 echo ""
-echo "Configuration file: $INSTALL_DIR/linkman.toml"
-echo "Encryption key has been generated."
-echo ""
-echo "To start the server:"
-echo "  sudo systemctl start linkman"
-echo ""
-echo "To check status:"
-echo "  sudo systemctl status linkman"
-echo ""
-echo "To view logs:"
-echo "  sudo journalctl -u linkman -f"
-echo ""
+
+if [ $ERROR_COUNT -eq 0 ]; then
+    echo "🎉 Installation Complete!"
+    echo ""
+    echo "Configuration file: $INSTALL_DIR/linkman.toml"
+    echo "Encryption key has been generated."
+    echo ""
+    echo "To start the server:"
+    echo "  sudo systemctl start linkman"
+    echo ""
+    echo "To check status:"
+    echo "  sudo systemctl status linkman"
+    echo ""
+    echo "To view logs:"
+    echo "  sudo journalctl -u linkman -f"
+    echo ""
+else
+    echo "❌ Installation failed with $ERROR_COUNT error(s)"
+    echo "Please check the error messages above and try again."
+    exit 1
+fi
