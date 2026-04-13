@@ -1,0 +1,45 @@
+[server]
+host = "0.0.0.0"
+port = 8388
+management_port = 8389
+max_connections = 1024
+connection_timeout = 300
+buffer_size = 65536
+
+[client]
+local_host = "127.0.0.1"
+local_port = 1080
+server_host = "your-server-ip"
+server_port = 8388
+connection_timeout = 30
+buffer_size = 65536
+
+[crypto]
+cipher = "aes-256-gcm"
+key = ""  # Generate with: linkman-server --generate-key
+identity = ""
+
+[traffic]
+enabled = true
+limit_mb = 0  # 0 = unlimited
+warning_threshold_mb = 1000
+reset_day = 1  # Reset on 1st of each month
+
+[device]
+max_devices = 5
+session_timeout = 3600
+allowed_devices = []
+
+[log]
+level = "INFO"
+file = "logs/linkman.log"
+max_size_mb = 10
+backup_count = 5
+format = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}"
+
+[tls]
+enabled = false
+cert_file = ""
+key_file = ""
+domain = ""
+websocket_path = "/linkman"

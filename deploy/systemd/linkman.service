@@ -1,0 +1,31 @@
+[Unit]
+Description=LinkMan VPN Server
+Documentation=https://github.com/linkman/linkman
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=linkman
+Group=linkman
+WorkingDirectory=/opt/linkman
+ExecStart=/opt/linkman/venv/bin/linkman-server -c /opt/linkman/linkman.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/linkman/data /opt/linkman/logs
+ReadOnlyPaths=/etc/ssl/certs
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target

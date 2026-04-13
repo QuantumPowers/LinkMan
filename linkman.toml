@@ -1,0 +1,30 @@
+[server]
+host = "127.0.0.1"
+port = 8388
+management_port = 8389
+max_connections = 1024
+connection_timeout = 300
+buffer_size = 65536
+
+[crypto]
+cipher = "aes-256-gcm"
+key = "kYQQgzX2KwZwU76tQchHHtwOw6VTdcFACkSuUjIyFSA"
+
+[traffic]
+enabled = true
+limit_mb = 0
+warning_threshold_mb = 1000
+reset_day = 1
+
+[device]
+max_devices = 5
+session_timeout = 3600
+
+[log]
+level = "DEBUG"
+file = "logs/linkman.log"
+max_size_mb = 10
+backup_count = 5
+
+[tls]
+enabled = false

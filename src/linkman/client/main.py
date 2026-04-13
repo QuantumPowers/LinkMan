@@ -1,0 +1,221 @@
+"""
+Client main entry point.
+
+Usage:
+    python -m linkman.client.main
+    or
+    linkman-client
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import signal
+import sys
+from typing import Self
+
+from linkman.shared.crypto.aead import AEADType
+from linkman.shared.crypto.keys import KeyManager
+from linkman.shared.utils.config import Config
+from linkman.shared.utils.logger import get_logger, setup_logger
+from linkman.client.proxy.local import LocalProxy
+from linkman.client.proxy.modes import ModeManager, ProxyMode
+from linkman.client.rules.matcher import RuleMatcher
+
+logger = get_logger("client")
+
+
+class Client:
+    """
+    LinkMan VPN Client.
+
+    Manages:
+    - Local proxy server
+    - Mode switching
+    - Rule management
+    """
+
+    def __init__(self, config: Config):
+        """
+        Initialize client.
+
+        Args:
+            config: Client configuration
+        """
+        self._config = config
+
+        key_manager = KeyManager.from_base64(config.crypto.key) if config.crypto.key else KeyManager()
+
+        cipher_type = AEADType(config.crypto.cipher)
+
+        self._mode_manager = ModeManager(
+            mode=ProxyMode.RULES,
+            rule_matcher=RuleMatcher(),
+        )
+
+        self._proxy = LocalProxy(
+            key=key_manager.master_key,
+            cipher_type=cipher_type,
+            server_host=config.client.server_host,
+            server_port=config.client.server_port,
+            mode_manager=self._mode_manager,
+        )
+
+        self._running = False
+
+    @property
+    def config(self) -> Config:
+        """Get configuration."""
+        return self._config
+
+    @property
+    def mode_manager(self) -> ModeManager:
+        """Get mode manager."""
+        return self._mode_manager
+
+    @property
+    def proxy(self) -> LocalProxy:
+        """Get local proxy."""
+        return self._proxy
+
+    async def start(self) -> None:
+        """Start the client."""
+        if self._running:
+            return
+
+        logger.info("Starting LinkMan client...")
+
+        await self._proxy.start(
+            self._config.client.local_host,
+            self._config.client.local_port,
+        )
+
+        self._running = True
+
+        logger.info(
+            f"Client started, proxy listening on "
+            f"{self._config.client.local_host}:{self._config.client.local_port}"
+        )
+
+    async def stop(self) -> None:
+        """Stop the client."""
+        if not self._running:
+            return
+
+        logger.info("Stopping LinkMan client...")
+
+        await self._proxy.stop()
+
+        self._running = False
+
+        logger.info("Client stopped")
+
+    async def run(self) -> None:
+        """Run the client."""
+        await self.start()
+
+        loop = asyncio.get_event_loop()
+        stop_event = asyncio.Event()
+
+        def signal_handler():
+            logger.info("Received shutdown signal")
+            stop_event.set()
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, signal_handler)
+
+        try:
+            await stop_event.wait()
+        finally:
+            await self.stop()
+
+    def set_mode(self, mode: ProxyMode) -> None:
+        """Set proxy mode."""
+        self._mode_manager.set_mode(mode)
+
+    def get_stats(self) -> dict:
+        """Get client statistics."""
+        return {
+            "proxy": self._proxy.get_stats(),
+            "mode": self._mode_manager.get_stats_dict(),
+        }
+
+    @classmethod
+    def from_config_file(cls, path: str) -> Self:
+        """Create client from config file."""
+        config = Config.load(path)
+        return cls(config)
+
+
+def main() -> None:
+    """Main entry point."""
+    parser = argparse.ArgumentParser(description="LinkMan VPN Client")
+    parser.add_argument(
+        "-c", "--config",
+        default="linkman.toml",
+        help="Configuration file path",
+    )
+    parser.add_argument(
+        "--local-host",
+        default="127.0.0.1",
+        help="Local proxy host",
+    )
+    parser.add_argument(
+        "-p", "--local-port",
+        type=int,
+        default=1080,
+        help="Local proxy port",
+    )
+    parser.add_argument(
+        "--server-host",
+        required=True,
+        help="Server host",
+    )
+    parser.add_argument(
+        "--server-port",
+        type=int,
+        default=8388,
+        help="Server port",
+    )
+    parser.add_argument(
+        "--key",
+        required=True,
+        help="Encryption key (base64)",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["global", "rules", "direct"],
+        default="rules",
+        help="Proxy mode",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Log level",
+    )
+
+    args = parser.parse_args()
+
+    setup_logger(level=args.log_level)
+
+    config = Config.load(args.config)
+
+    config.client.local_host = args.local_host
+    config.client.local_port = args.local_port
+    config.client.server_host = args.server_host
+    config.client.server_port = args.server_port
+    config.crypto.key = args.key
+
+    client = Client(config)
+    client.set_mode(ProxyMode(args.mode))
+
+    try:
+        asyncio.run(client.run())
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()
