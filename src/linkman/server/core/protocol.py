@@ -23,6 +23,7 @@ from linkman.shared.protocol.types import (
     Request,
     Response,
 )
+from linkman.shared.errors import wrap_error, NetworkError, CryptoError
 from linkman.shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -112,30 +113,39 @@ class ServerProtocol:
 
             await self._relay()
 
-        except asyncio.TimeoutError:
-            logger.warning(f"Connection timeout from {self._client_addr}")
+        except asyncio.TimeoutError as e:
+            wrapped_error = wrap_error(e)
+            logger.warning(f"Connection timeout from {self._client_addr}: {wrapped_error}")
+            await self._send_error_response(ReplyCode.TTL_EXPIRED)
         except ProtocolError as e:
             logger.error(f"Protocol error from {self._client_addr}: {e}")
             await self._send_error_response(e.reply_code or ReplyCode.GENERAL_FAILURE)
         except Exception as e:
-            logger.exception(f"Error handling connection from {self._client_addr}: {e}")
+            wrapped_error = wrap_error(e)
+            logger.exception(f"Error handling connection from {self._client_addr}: {wrapped_error}")
+            await self._send_error_response(ReplyCode.GENERAL_FAILURE)
         finally:
             await self.close()
 
     async def _handshake(self) -> None:
-        """Perform protocol handshake."""
-        salt = await asyncio.wait_for(
-            self._reader.read(16),
-            timeout=self.HANDSHAKE_TIMEOUT,
-        )
+        """Perform protocol handshake with timeout."""
+        try:
+            salt = await asyncio.wait_for(
+                self._reader.read(16),
+                timeout=self.HANDSHAKE_TIMEOUT,
+            )
 
-        if len(salt) != 16:
-            raise ProtocolError("Invalid salt length")
+            if len(salt) != 16:
+                raise ProtocolError("Invalid salt length")
 
-        cipher_type = self._handler.cipher_type
-        self._cipher = AEADCipher(cipher_type, self._handler.key, salt)
+            cipher_type = self._handler.cipher_type
+            self._cipher = AEADCipher(cipher_type, self._handler.key, salt)
 
-        logger.debug(f"Handshake completed with {self._client_addr}")
+            logger.debug(f"Handshake completed with {self._client_addr}")
+        except asyncio.TimeoutError:
+            raise ProtocolError("Handshake timeout", ReplyCode.TTL_EXPIRED)
+        except Exception as e:
+            raise ProtocolError(f"Handshake failed: {e}")
 
     async def _handle_request(self) -> None:
         """Handle client request."""
@@ -149,12 +159,41 @@ class ServerProtocol:
         if request.command == Command.CONNECT:
             await self._handle_connect(request.address)
         elif request.command == Command.UDP_ASSOCIATE:
-            raise ProtocolError("UDP not supported yet", ReplyCode.COMMAND_NOT_SUPPORTED)
+            await self._handle_udp_associate(request.address)
         else:
             raise ProtocolError(f"Unknown command: {request.command}", ReplyCode.COMMAND_NOT_SUPPORTED)
 
+    async def _handle_udp_associate(self, address: Address) -> None:
+        """Handle UDP ASSOCIATE command."""
+        self._target_addr = str(address)
+        logger.info(f"UDP associate request: {self._client_addr} -> {self._target_addr}")
+
+        if not await self._handler.check_access(self._client_addr, address):
+            raise ProtocolError("Access denied", ReplyCode.CONNECTION_NOT_ALLOWED)
+
+        try:
+            # Get UDP server port from handler
+            udp_port = getattr(self._handler, "udp_server_port", 0)
+            if udp_port == 0:
+                raise ProtocolError("UDP server not available", ReplyCode.GENERAL_FAILURE)
+
+            # Create a dummy address with the UDP port
+            bind_address = Address(host="0.0.0.0", port=udp_port, addr_type=address.addr_type)
+            response = Response.success(bind_address)
+            await self._write_encrypted(response.to_bytes())
+
+            logger.info(f"UDP associate established: {self._client_addr} -> UDP port {udp_port}")
+
+            # Keep the connection alive for UDP association
+            # Client will send UDP packets to the UDP server
+            await asyncio.sleep(300)  # 5 minutes timeout
+
+        except Exception as e:
+            logger.error(f"Failed to handle UDP associate: {e}")
+            raise ProtocolError(f"UDP associate failed: {e}", ReplyCode.GENERAL_FAILURE)
+
     async def _handle_connect(self, address: Address) -> None:
-        """Handle CONNECT command."""
+        """Handle CONNECT command with better error handling."""
         self._target_addr = str(address)
         logger.info(f"Connect request: {self._client_addr} -> {self._target_addr}")
 
@@ -162,9 +201,11 @@ class ServerProtocol:
             raise ProtocolError("Access denied", ReplyCode.CONNECTION_NOT_ALLOWED)
 
         try:
+            # Use a configurable timeout for target connection
+            connect_timeout = 15  # Increased timeout for better reliability
             self._target_reader, self._target_writer = await asyncio.wait_for(
                 asyncio.open_connection(address.host, address.port),
-                timeout=10,
+                timeout=connect_timeout,
             )
 
             response = Response.success()
@@ -173,10 +214,16 @@ class ServerProtocol:
             logger.info(f"Connected: {self._client_addr} -> {self._target_addr}")
 
         except asyncio.TimeoutError:
-            raise ProtocolError("Connection timeout", ReplyCode.TTL_EXPIRED)
+            raise ProtocolError(f"Connection timeout after {connect_timeout}s", ReplyCode.TTL_EXPIRED)
         except OSError as e:
-            logger.error(f"Failed to connect to {self._target_addr}: {e}")
-            raise ProtocolError(str(e), ReplyCode.HOST_UNREACHABLE)
+            error_msg = f"Failed to connect to {self._target_addr}: {e}"
+            logger.error(error_msg)
+            if "nodename nor servname provided" in str(e) or "Name or service not known" in str(e):
+                raise ProtocolError("Host not found", ReplyCode.HOST_UNREACHABLE)
+            elif "Connection refused" in str(e):
+                raise ProtocolError("Connection refused", ReplyCode.CONNECTION_REFUSED)
+            else:
+                raise ProtocolError(error_msg, ReplyCode.HOST_UNREACHABLE)
 
     async def _relay(self) -> None:
         """Relay data between client and target."""
@@ -198,47 +245,75 @@ class ServerProtocol:
                 pass
 
     async def _relay_upstream(self) -> None:
-        """Relay data from client to target."""
+        """Relay data from client to target with optimized performance."""
         if self._cipher is None or self._target_writer is None:
             return
 
         try:
+            buffer = b""
+            total_sent = 0
             while not self._is_closed:
-                data = await self._read_encrypted()
-                if not data:
+                chunk = await self._reader.read(self.BUFFER_SIZE)
+                if not chunk:
+                    if buffer:
+                        logger.debug("Incomplete packet when closing connection")
                     break
 
-                self._target_writer.write(data)
-                await self._target_writer.drain()
-                self._bytes_sent += len(data)
-
-                await self._handler.on_data_transfer(self, len(data), 0)
+                buffer += chunk
+                
+                # Process all complete packets in buffer
+                while buffer:
+                    try:
+                        payload, buffer = self._cipher.decrypt_packet(buffer)
+                        if payload:
+                            self._target_writer.write(payload)
+                            self._bytes_sent += len(payload)
+                            total_sent += len(payload)
+                    except ValueError:
+                        # Incomplete packet, continue reading
+                        break
+                
+                # Drain and report data transfer periodically
+                if total_sent >= self.BUFFER_SIZE:
+                    await self._target_writer.drain()
+                    await self._handler.on_data_transfer(self, total_sent, 0)
+                    total_sent = 0
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.debug(f"Upstream relay error: {e}")
+            wrapped_error = wrap_error(e)
+            logger.debug(f"Upstream relay error: {wrapped_error}")
 
     async def _relay_downstream(self) -> None:
-        """Relay data from target to client."""
+        """Relay data from target to client with optimized performance."""
         if self._cipher is None or self._target_reader is None:
             return
 
         try:
+            total_received = 0
             while not self._is_closed:
                 data = await self._target_reader.read(self.BUFFER_SIZE)
                 if not data:
                     break
 
-                await self._write_encrypted(data)
+                # Optimize: write encrypted data in one go
+                encrypted = self._cipher.encrypt_packet(data)
+                self._writer.write(encrypted)
                 self._bytes_received += len(data)
-
-                await self._handler.on_data_transfer(self, 0, len(data))
+                total_received += len(data)
+                
+                # Drain and report data transfer periodically
+                if total_received >= self.BUFFER_SIZE:
+                    await self._writer.drain()
+                    await self._handler.on_data_transfer(self, 0, total_received)
+                    total_received = 0
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.debug(f"Downstream relay error: {e}")
+            wrapped_error = wrap_error(e)
+            logger.debug(f"Downstream relay error: {wrapped_error}")
 
     async def _read_encrypted(self) -> bytes:
         """Read and decrypt data from client."""

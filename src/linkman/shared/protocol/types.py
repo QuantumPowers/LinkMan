@@ -44,11 +44,15 @@ class ReplyCode(IntEnum):
     ADDRESS_TYPE_NOT_SUPPORTED = 0x08
 
 
-class ProtocolError(Exception):
-    """Protocol-related errors."""
+from linkman.shared.errors import LinkManError
 
-    def __init__(self, message: str, reply_code: ReplyCode | None = None):
-        super().__init__(message)
+
+class ProtocolError(LinkManError):
+    """Protocol-related errors with SOCKS5 reply code."""
+
+    def __init__(self, message: str, reply_code: ReplyCode | None = None, cause: Exception | None = None):
+        from linkman.shared.errors import ErrorCode
+        super().__init__(message, ErrorCode.PROTOCOL_ERROR, cause)
         self.reply_code = reply_code
 
 

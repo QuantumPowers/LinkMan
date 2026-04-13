@@ -60,6 +60,9 @@ class Client:
             server_host=config.client.server_host,
             server_port=config.client.server_port,
             mode_manager=self._mode_manager,
+            tls_enabled=config.tls.enabled,
+            websocket_enabled=config.tls.enabled,  # WebSocket is only available with TLS
+            websocket_path=config.tls.websocket_path,
         )
 
         self._running = False

@@ -37,6 +37,13 @@ class ServerStatus:
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
     disk_percent: float = 0.0
+    bytes_sent: int = 0
+    bytes_received: int = 0
+    active_sessions: int = 0
+    total_sessions: int = 0
+    error_count: int = 0
+    request_rate: float = 0.0  # requests per second
+    throughput: float = 0.0  # bytes per second
 
     @property
     def uptime_str(self) -> str:
@@ -58,6 +65,13 @@ class ServerStatus:
             "cpu_percent": round(self.cpu_percent, 1),
             "memory_percent": round(self.memory_percent, 1),
             "disk_percent": round(self.disk_percent, 1),
+            "bytes_sent": self.bytes_sent,
+            "bytes_received": self.bytes_received,
+            "active_sessions": self.active_sessions,
+            "total_sessions": self.total_sessions,
+            "error_count": self.error_count,
+            "request_rate": round(self.request_rate, 2),
+            "throughput": round(self.throughput, 2),
         }
 
 
@@ -133,6 +147,11 @@ class Monitor:
         self._system_info = SystemInfo()
         self._monitor_task: asyncio.Task | None = None
         self._running = False
+
+        # Initialize monitoring variables
+        self._last_bytes_sent = 0
+        self._last_bytes_received = 0
+        self._last_total_connections = 0
 
     @property
     def status(self) -> ServerStatus:
@@ -223,6 +242,29 @@ class Monitor:
         if self._connection_handler:
             self._status.connections = self._connection_handler.active_connections
             self._status.total_connections = self._connection_handler.total_connections
+
+        if self._session_manager:
+            session_stats = self._session_manager.get_stats()
+            self._status.active_sessions = session_stats.get("active_sessions", 0)
+            self._status.total_sessions = session_stats.get("total_sessions", 0)
+
+        if self._traffic_manager:
+            traffic_stats = self._traffic_manager.get_stats()
+            self._status.bytes_sent = traffic_stats.get("total_sent", 0)
+            self._status.bytes_received = traffic_stats.get("total_received", 0)
+            # Calculate throughput (bytes per second)
+            if hasattr(self, "_last_bytes_sent"):
+                bytes_delta = (self._status.bytes_sent + self._status.bytes_received) - (self._last_bytes_sent + self._last_bytes_received)
+                self._status.throughput = bytes_delta / self.UPDATE_INTERVAL
+            # Store current bytes for next calculation
+            self._last_bytes_sent = self._status.bytes_sent
+            self._last_bytes_received = self._status.bytes_received
+
+        # Calculate request rate
+        if hasattr(self, "_last_total_connections"):
+            conn_delta = self._status.total_connections - self._last_total_connections
+            self._status.request_rate = conn_delta / self.UPDATE_INTERVAL
+        self._last_total_connections = self._status.total_connections
 
         try:
             import psutil

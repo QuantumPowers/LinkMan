@@ -46,6 +46,7 @@ class ConnectionHandler:
         traffic_manager: "TrafficManager | None" = None,
         session_manager: "SessionManager | None" = None,
         max_connections: int = 1024,
+        udp_server_port: int = 0,
     ):
         """
         Initialize connection handler.
@@ -58,6 +59,7 @@ class ConnectionHandler:
             traffic_manager: Optional traffic manager
             session_manager: Optional session manager
             max_connections: Maximum concurrent connections
+            udp_server_port: UDP server port
         """
         self._key = key
         self._cipher_type = cipher_type
@@ -66,10 +68,20 @@ class ConnectionHandler:
         self._traffic_manager = traffic_manager
         self._session_manager = session_manager
         self._max_connections = max_connections
+        self._udp_server_port = udp_server_port
 
         self._active_connections: set[ServerProtocol] = set()
         self._connection_count = 0
         self._on_connection_change: Callable[[int], None] | None = None
+
+    @property
+    def udp_server_port(self) -> int:
+        """Get UDP server port."""
+        return self._udp_server_port
+
+    def set_udp_server_port(self, port: int) -> None:
+        """Set UDP server port."""
+        self._udp_server_port = port
 
     @property
     def key(self) -> bytes:

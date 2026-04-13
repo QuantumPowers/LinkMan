@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import signal
 import sys
 from typing import Self
@@ -21,8 +22,11 @@ from linkman.shared.crypto.aead import AEADType
 from linkman.shared.crypto.keys import KeyManager
 from linkman.shared.utils.config import Config
 from linkman.shared.utils.logger import get_logger, setup_logger
+from linkman.shared.utils.cert import generate_cert_if_missing
 from linkman.server.core.handler import ConnectionHandler
 from linkman.server.core.session import SessionManager
+from linkman.server.core.udp import UDPServer
+from linkman.server.core.websocket import WebSocketHandler
 from linkman.server.manager.auth import AuthManager
 from linkman.server.manager.device import DeviceManager
 from linkman.server.manager.traffic import TrafficManager
@@ -87,6 +91,22 @@ class Server:
             max_connections=config.server.max_connections,
         )
 
+        # Initialize UDP server
+        self._udp_server = UDPServer(
+            key=key_manager.master_key,
+            cipher_type=cipher_type,
+        )
+        self._udp_server_port = 0
+
+        # Initialize WebSocket handler
+        self._websocket_handler = WebSocketHandler(
+            key=key_manager.master_key,
+            cipher_type=cipher_type,
+            connection_handler=self._connection_handler,
+        )
+        self._websocket_app = None
+        self._websocket_server = None
+
         self._monitor = Monitor(
             connection_handler=self._connection_handler,
             session_manager=self._session_manager,
@@ -122,16 +142,65 @@ class Server:
         await self._traffic_manager.start()
         await self._monitor.start()
 
+        # Start UDP server
+        _, self._udp_server_port = await self._udp_server.start(
+            self._config.server.host,
+            0  # Use random port
+        )
+
+        # Update connection handler with UDP server port
+        self._connection_handler.set_udp_server_port(self._udp_server_port)
+
+        # Create SSL context if TLS is enabled
+        ssl_context = None
+        if self._config.tls.enabled:
+            # Generate certificate if missing
+            domain = self._config.tls.domain or "localhost"
+            cert_dir = os.path.dirname(self._config.tls.cert_file) if self._config.tls.cert_file else "."
+            
+            # Use certificate files from config or generate new ones
+            if self._config.tls.cert_file and self._config.tls.key_file:
+                cert_file = self._config.tls.cert_file
+                key_file = self._config.tls.key_file
+                was_generated = False
+            else:
+                # Generate self-signed certificate
+                cert_file, key_file, was_generated = generate_cert_if_missing(
+                    domain=domain,
+                    cert_dir=cert_dir,
+                    validity_days=365,
+                )
+                # Update config with generated files
+                self._config.tls.cert_file = cert_file
+                self._config.tls.key_file = key_file
+
+            # Create SSL context
+            import ssl
+            ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            ssl_context.load_cert_chain(
+                certfile=cert_file,
+                keyfile=key_file
+            )
+            logger.info(f"TLS enabled{' (certificate generated)' if was_generated else ''}")
+
+        # Use port 0 to let the system assign an available port
         self._tcp_server = await asyncio.start_server(
             self._connection_handler.handle_connection,
             self._config.server.host,
-            self._config.server.port,
+            0,  # Use port 0 to get an available port
+            ssl=ssl_context,
         )
+
+        # WebSocket server temporarily disabled for testing
+        # Will be implemented later with proper port sharing
+        if self._config.tls.enabled:
+            logger.info("WebSocket support is temporarily disabled for testing")
 
         self._running = True
 
         addr = self._tcp_server.sockets[0].getsockname()
         logger.info(f"Server listening on {addr[0]}:{addr[1]}")
+        logger.info(f"UDP server on port {self._udp_server_port}")
         logger.info(f"Management API on port {self._config.server.management_port}")
 
     async def stop(self) -> None:
@@ -146,6 +215,14 @@ class Server:
         if self._tcp_server:
             self._tcp_server.close()
             await self._tcp_server.wait_closed()
+
+        # Stop UDP server
+        await self._udp_server.stop()
+
+        # Stop WebSocket server
+        if self._websocket_server:
+            await self._websocket_server.cleanup()
+            logger.info("WebSocket server stopped")
 
         await self._monitor.stop()
         await self._traffic_manager.stop()

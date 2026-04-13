@@ -45,6 +45,9 @@ class LocalProxy:
         server_host: str = "",
         server_port: int = 8388,
         mode_manager: "ModeManager | None" = None,
+        tls_enabled: bool = False,
+        websocket_enabled: bool = False,
+        websocket_path: str = "/linkman",
     ):
         """
         Initialize local proxy.
@@ -55,12 +58,18 @@ class LocalProxy:
             server_host: Remote server host
             server_port: Remote server port
             mode_manager: Optional mode manager for routing
+            tls_enabled: Whether to use TLS
+            websocket_enabled: Whether to use WebSocket
+            websocket_path: WebSocket path
         """
         self._key = key
         self._cipher_type = cipher_type
         self._server_host = server_host
         self._server_port = server_port
         self._mode_manager = mode_manager
+        self._tls_enabled = tls_enabled
+        self._websocket_enabled = websocket_enabled
+        self._websocket_path = websocket_path
 
         self._server = None
         self._running = False
@@ -167,11 +176,19 @@ class LocalProxy:
                 should_proxy = await self._mode_manager.should_proxy(target)
 
             if should_proxy:
-                protocol = ClientProtocol(self._key, self._cipher_type)
+                protocol = ClientProtocol(
+                    self._key, 
+                    self._cipher_type, 
+                    tls_enabled=self._tls_enabled,
+                    websocket_enabled=self._websocket_enabled,
+                    websocket_path=self._websocket_path,
+                )
                 await protocol.connect(
                     self._server_host,
                     self._server_port,
                     target,
+                    max_retries=3,
+                    retry_delay=2.0,
                 )
                 await protocol.relay(reader, writer)
             else:

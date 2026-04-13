@@ -18,10 +18,7 @@ from typing import Any, Self
 import tomli_w
 
 
-class ConfigError(Exception):
-    """Configuration-related errors."""
-
-    pass
+from linkman.shared.errors import ConfigError
 
 
 @dataclass
@@ -372,6 +369,13 @@ class Config:
 
         if not self.crypto.key:
             errors.append("crypto.key is required")
+        else:
+            # Validate key format
+            try:
+                from linkman.shared.crypto.keys import KeyManager
+                KeyManager.from_base64(self.crypto.key)
+            except Exception as e:
+                errors.append(f"Invalid crypto.key format: {e}")
 
         if self.server.port < 1 or self.server.port > 65535:
             errors.append(f"Invalid server port: {self.server.port}")
@@ -380,9 +384,7 @@ class Config:
             errors.append(f"Invalid local port: {self.client.local_port}")
 
         if self.tls.enabled:
-            if not self.tls.cert_file:
-                errors.append("tls.cert_file is required when TLS is enabled")
-            if not self.tls.key_file:
-                errors.append("tls.key_file is required when TLS is enabled")
+            # cert_file and key_file are not required - will be generated if missing
+            pass
 
         return errors
