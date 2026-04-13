@@ -6,48 +6,53 @@
 
 set -e
 
-INSTALL_DIR="/opt/linkman"
-SERVICE_USER="linkman"
-PYTHON_VERSION="3.11"
+# Get current user
+if [ -n "$SUDO_USER" ]; then
+    # Running as root via sudo
+    SERVICE_USER="$SUDO_USER"
+elif [ "$EUID" -eq 0 ]; then
+    # Running as root directly (not recommended)
+    echo "Error: Please run this script with sudo from your regular user account"
+    echo "Example: sudo bash deploy/install.sh"
+    exit 1
+else
+    # Running as regular user
+    SERVICE_USER="$(whoami)"
+fi
+
+INSTALL_DIR="/home/$SERVICE_USER/linkman"
 
 echo "=========================================="
 echo "  LinkMan Server Installation Script"
 echo "=========================================="
+echo "Service user: $SERVICE_USER"
+echo "Installation directory: $INSTALL_DIR"
 
 if [ "$EUID" -ne 0 ]; then
-    echo "Please run as root"
+    echo "Please run with sudo"
+    echo "Example: sudo bash deploy/install.sh"
     exit 1
 fi
 
-echo "[1/7] Installing dependencies..."
+echo "[1/6] Installing dependencies..."
 apt-get update
 apt-get install -y python3 python3-pip python3-venv nginx certbot
 
-echo "[2/7] Creating service user..."
-if ! id -u $SERVICE_USER &>/dev/null; then
-    useradd -r -s /bin/false $SERVICE_USER
-fi
-
-echo "[3/7] Creating directories..."
+echo "[2/6] Creating directories..."
 mkdir -p $INSTALL_DIR
 mkdir -p $INSTALL_DIR/data
 mkdir -p $INSTALL_DIR/logs
 
-echo "[4/7] Setting up Python virtual environment..."
+echo "[3/6] Setting up Python virtual environment..."
 python3 -m venv $INSTALL_DIR/venv
 source $INSTALL_DIR/venv/bin/activate
 
-echo "[5/7] Installing LinkMan..."
-if [ -f "requirements.txt" ]; then
-    pip install --upgrade pip
-    pip install -r requirements.txt
-fi
+echo "[4/6] Installing LinkMan..."
+pip install --upgrade pip
+pip install -r requirements.txt
+pip install -e .
 
-if [ -d "src" ]; then
-    pip install -e .
-fi
-
-echo "[6/7] Creating configuration..."
+echo "[5/6] Creating configuration..."
 if [ ! -f "$INSTALL_DIR/linkman.toml" ]; then
     cat > $INSTALL_DIR/linkman.toml << 'EOF'
 [server]
@@ -75,7 +80,7 @@ allowed_devices = []
 
 [log]
 level = "INFO"
-file = "/opt/linkman/logs/linkman.log"
+file = "/home/linkman/linkman/logs/linkman.log"
 max_size_mb = 10
 backup_count = 5
 
@@ -88,10 +93,13 @@ websocket_path = "/linkman"
 EOF
 fi
 
+# Update log path in configuration
+sed -i "s|/home/linkman/linkman/logs/linkman.log|/home/$SERVICE_USER/linkman/logs/linkman.log|" $INSTALL_DIR/linkman.toml
+
 KEY=$(python3 -c "from linkman.shared.crypto.keys import KeyManager; print(KeyManager().master_key_base64)")
 sed -i "s/^key = \"\"/key = \"$KEY\"/" $INSTALL_DIR/linkman.toml
 
-echo "[7/7] Installing systemd service..."
+echo "[6/6] Installing systemd service..."
 cat > /etc/systemd/system/linkman.service << EOF
 [Unit]
 Description=LinkMan VPN Server
@@ -102,7 +110,7 @@ Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/venv/bin/linkman-server -c $INSTALL_DIR/linkman.toml
+ExecStart=$INSTALL_DIR/venv/bin/python -m linkman.server.main -c $INSTALL_DIR/linkman.toml
 Restart=always
 RestartSec=5
 
@@ -124,11 +132,11 @@ echo "Configuration file: $INSTALL_DIR/linkman.toml"
 echo "Encryption key has been generated."
 echo ""
 echo "To start the server:"
-echo "  systemctl start linkman"
+echo "  sudo systemctl start linkman"
 echo ""
 echo "To check status:"
-echo "  systemctl status linkman"
+echo "  sudo systemctl status linkman"
 echo ""
 echo "To view logs:"
-echo "  journalctl -u linkman -f"
+echo "  sudo journalctl -u linkman -f"
 echo ""

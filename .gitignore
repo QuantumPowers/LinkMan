@@ -46,6 +46,7 @@ data/*.sqlite
 *.pem
 *.key
 *.crt
+linkman.toml
 
 node_modules/
 web/dist/
