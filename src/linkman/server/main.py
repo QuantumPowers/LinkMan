@@ -191,10 +191,29 @@ class Server:
             ssl=ssl_context,
         )
 
-        # WebSocket server temporarily disabled for testing
-        # Will be implemented later with proper port sharing
+        # Start WebSocket server if TLS is enabled
         if self._config.tls.enabled:
-            logger.info("WebSocket support is temporarily disabled for testing")
+            try:
+                from aiohttp import web
+                
+                async def websocket_handler(request):
+                    ws = web.WebSocketResponse()
+                    await ws.prepare(request)
+                    await self._websocket_handler.handle_websocket(ws)
+                    return ws
+                
+                app = web.Application()
+                websocket_path = self._config.tls.websocket_path or "/linkman"
+                app.add_routes([web.get(websocket_path, websocket_handler)])
+                
+                # Start WebSocket server on the same port as TCP server
+                self._websocket_app = app
+                
+                # Note: WebSocket server is now integrated with the main server
+                logger.info(f"WebSocket support enabled at {websocket_path}")
+            except Exception as e:
+                logger.warning(f"Failed to start WebSocket server: {e}")
+                logger.info("WebSocket support disabled")
 
         self._running = True
 

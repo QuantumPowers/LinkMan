@@ -138,8 +138,32 @@ fi
 # Update log path in configuration
 sed -i "s|/home/linkman/linkman/logs/linkman.log|/home/$SERVICE_USER/linkman/logs/linkman.log|" $INSTALL_DIR/linkman.toml
 
-KEY=$(python3 -c "from linkman.shared.crypto.keys import KeyManager; print(KeyManager().master_key_base64)")
+# Generate secure encryption key
+KEY=$(python3 -c "from linkman.shared.crypto.keys import KeyManager; key = KeyManager.generate_master_key(); print(KeyManager(key).master_key_base64)")
 sed -i "s/^key = \"\"/key = \"$KEY\"/" $INSTALL_DIR/linkman.toml
+
+# Update TLS configuration with placeholder for user input
+sed -i "s/^enabled = false/enabled = true/" $INSTALL_DIR/linkman.toml
+sed -i "s/^domain = \"\"/domain = \"YOUR_DOMAIN_OR_IP\"/" $INSTALL_DIR/linkman.toml
+
+# Add installation summary with important notes
+echo ""
+echo "=========================================="
+echo "  IMPORTANT CONFIGURATION NOTES"
+echo "=========================================="
+echo "1. Encryption key has been automatically generated"
+echo "2. TLS is enabled by default"
+echo "3. Please update the following in $INSTALL_DIR/linkman.toml:"
+echo "   - domain = \"YOUR_DOMAIN_OR_IP\"  # Replace with your actual domain or IP"
+echo "   - port = 8388  # Change if needed"
+echo "   - management_port = 8389  # Change if needed"
+echo ""
+echo "4. If using TLS with a domain, run certbot to get a real certificate:"
+echo "   sudo bash $INSTALL_DIR/deploy/certbot.sh"
+echo ""
+echo "5. Start the server:"
+echo "   sudo systemctl start linkman"
+
 
 print_success "Configuration created successfully"
 
