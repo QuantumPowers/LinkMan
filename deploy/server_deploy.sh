@@ -238,10 +238,10 @@ if [ -z "$KEY" ]; then
 fi
 
 # Update configuration file
-sed -i "s/^key = \"[^"]*\"/key = \"$KEY\"/" "$CONFIG_FILE"
+sed -i 's/^key = "[^"]*"/key = "'"$KEY"'"/' "$CONFIG_FILE"
 
 # Update .env file
-sed -i "s/^ENCRYPTION_KEY=\"[\"]*\"/ENCRYPTION_KEY=\"$KEY\"/" "$ENV_FILE"
+sed -i 's/^ENCRYPTION_KEY="[\"]*"/ENCRYPTION_KEY="'"$KEY"'"/' "$ENV_FILE"
 
 print_success "Encryption key generated and updated"
 
@@ -250,9 +250,9 @@ print_step "Configuring TLS settings"
 read -p "Enter your domain (press Enter to use existing): " DOMAIN
 if [ -n "$DOMAIN" ]; then
     # Update configuration file
-    sed -i "s/^domain = \"[^"]*\"/domain = \"$DOMAIN\"/" "$CONFIG_FILE"
+    sed -i 's/^domain = "[^"]*"/domain = "'"$DOMAIN"'"/' "$CONFIG_FILE"
     # Update .env file
-    sed -i "s/^TLS_DOMAIN=\"[\"]*\"/TLS_DOMAIN=\"$DOMAIN\"/" "$ENV_FILE"
+    sed -i 's/^TLS_DOMAIN="[\"]*"/TLS_DOMAIN="'"$DOMAIN"'"/' "$ENV_FILE"
     print_success "Domain updated to $DOMAIN"
 else
     print_success "Using existing domain"
