@@ -20,6 +20,10 @@ else
     SERVICE_USER="$(whoami)"
 fi
 
+# Get script directory
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
 DEPLOY_DIR="/home/$SERVICE_USER/linkman"
 CONFIG_FILE="$DEPLOY_DIR/linkman.toml"
 ENV_FILE="$DEPLOY_DIR/.env"
@@ -113,8 +117,17 @@ if [ ! -d "$DEPLOY_DIR" ]; then
     fi
 fi
 
-# Create virtual environment
+# Copy project files to deployment directory
+if [ "$PROJECT_DIR" != "$DEPLOY_DIR" ]; then
+    print_success "Copying project files to deployment directory"
+    cp -r "$PROJECT_DIR"/* "$DEPLOY_DIR/" 2>/dev/null || true
+    cp -r "$PROJECT_DIR"/.* "$DEPLOY_DIR/" 2>/dev/null || true
+fi
+
+# Change to deployment directory
 cd "$DEPLOY_DIR"
+
+# Create virtual environment
 if [ ! -d "venv" ]; then
     if python3 -m venv venv; then
         print_success "Virtual environment created"
@@ -130,7 +143,7 @@ fi
 source venv/bin/activate
 
 # Install dependencies
-if pip install --upgrade pip && pip install -r requirements.txt && pip install .; then
+if pip install --upgrade pip && pip install -r "$DEPLOY_DIR/requirements.txt" && pip install "$DEPLOY_DIR"; then
     print_success "Dependencies installed successfully"
 else
     print_error "Failed to install dependencies"
