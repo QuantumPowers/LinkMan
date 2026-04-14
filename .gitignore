@@ -44,8 +44,8 @@ dist/
 .pytest_cache/
 
 # Deployment files
-deploy/*.sh
-!deploy/*.sh.example
+# deploy/*.sh
+# !deploy/*.sh.example
 
 # Generated files
 generated/
