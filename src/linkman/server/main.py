@@ -197,13 +197,20 @@ class Server:
                 from aiohttp import web
                 
                 async def websocket_handler(request):
-                    ws = web.WebSocketResponse()
+                    # Add common HTTP headers to disguise as regular web traffic
+                    ws = web.WebSocketResponse(
+                        headers={
+                            'Server': 'nginx',
+                            'X-Powered-By': 'PHP/7.4.33',
+                            'Content-Type': 'application/json'
+                        }
+                    )
                     await ws.prepare(request)
                     await self._websocket_handler.handle_websocket(ws)
                     return ws
                 
                 app = web.Application()
-                websocket_path = self._config.tls.websocket_path or "/linkman"
+                websocket_path = self._config.tls.websocket_path or "/api/ws"
                 app.add_routes([web.get(websocket_path, websocket_handler)])
                 
                 # Start WebSocket server on the same port as TCP server

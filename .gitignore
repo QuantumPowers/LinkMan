@@ -1,55 +1,131 @@
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+# LinkMan VPN - .gitignore
 
-.venv/
+# Virtual environments
 venv/
-ENV/
 env/
 
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
+# Configuration files
+*.toml
+!.toml.example
 
-.pytest_cache/
-.coverage
-htmlcov/
-.mypy_cache/
-.ruff_cache/
-
-*.log
-logs/
-data/*.db
-data/*.sqlite
-
+# Environment variables
 .env
-.env.local
+
+# Logs
+logs/
+*.log
+
+# Certificates
 *.pem
 *.key
 *.crt
-linkman.toml
 
-node_modules/
-web/dist/
+# Python files
+__pycache__/
+*.pyc
 
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
 .DS_Store
 Thumbs.db
+
+# Build files
+build/
+dist/
+*.egg-info/
+
+# Test files
+.coverage
+.pytest_cache/
+
+# Deployment files
+deploy/*.sh
+!deploy/*.sh.example
+
+# Generated files
+generated/
+
+# Backup files
+*.bak
+*.old
+
+# Temporary files
+*.tmp
+*.temp
+
+# Docker files
+Dockerfile
+.dockerignore
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Documentation build files
+docs/build/
+docs/source/_build/
+
+# Local development files
+local/
+development/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Binary files
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Large files
+*.zip
+*.tar.gz
+*.tar.bz2
+*.rar
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# TypeScript
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional stylelint cache
+.stylelintcache
+
+# Yarn
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+.pnp.*

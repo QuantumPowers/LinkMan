@@ -54,7 +54,14 @@ class WebSocketHandler:
         Returns:
             WebSocket response
         """
-        ws = web.WebSocketResponse()
+        # Add common HTTP headers to disguise as regular web traffic
+        ws = web.WebSocketResponse(
+            headers={
+                'Server': 'nginx',
+                'X-Powered-By': 'PHP/7.4.33',
+                'Content-Type': 'application/json'
+            }
+        )
         await ws.prepare(request)
 
         peername = request.transport.get_extra_info('peername')

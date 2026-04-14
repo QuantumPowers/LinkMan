@@ -15,7 +15,7 @@ connection_timeout = 30
 buffer_size = 65536
 
 [crypto]
-cipher = "aes-256-gcm"
+cipher = "chacha20-poly1305"  # 轻量级加密算法，性能更好
 key = ""  # Generate with: linkman-server --generate-key
 identity = ""
 
@@ -38,8 +38,8 @@ backup_count = 5
 format = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}"
 
 [tls]
-enabled = false
+enabled = true  # 默认启用TLS加密
 cert_file = ""
 key_file = ""
-domain = ""
-websocket_path = "/linkman"
+domain = "your-domain.com"  # 替换为你的域名
+websocket_path = "/api/ws"  # 伪装成API路径
