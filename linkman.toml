@@ -8,7 +8,7 @@ buffer_size = 65536
 
 [crypto]
 cipher = "aes-256-gcm"
-key = ""
+key = "XC7FTO_gpH5L8fnCgPWmJiC0rTu5jqFgcRjug8dMF6k"
 
 [traffic]
 enabled = true
@@ -27,4 +27,16 @@ max_size_mb = 10
 backup_count = 5
 
 [tls]
-enabled = false
+enabled = true
+cert_file = ""
+key_file = ""
+domain = ""
+websocket_path = "/api/ws"
+
+[client]
+local_host = "127.0.0.1"
+local_port = 1080
+server_host = "43.163.201.246"
+server_port = 8388
+connection_timeout = 30
+buffer_size = 32768

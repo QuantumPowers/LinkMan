@@ -183,11 +183,11 @@ class Server:
             )
             logger.info(f"TLS enabled{' (certificate generated)' if was_generated else ''}")
 
-        # Use port 0 to let the system assign an available port
+        # Use port from config
         self._tcp_server = await asyncio.start_server(
             self._connection_handler.handle_connection,
             self._config.server.host,
-            0,  # Use port 0 to get an available port
+            self._config.server.port,  # Use port from config
             ssl=ssl_context,
         )
 
