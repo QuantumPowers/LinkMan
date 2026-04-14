@@ -22,6 +22,7 @@ from linkman.shared.utils.logger import get_logger, setup_logger
 from linkman.client.proxy.local import LocalProxy
 from linkman.client.proxy.modes import ModeManager, ProxyMode
 from linkman.client.rules.matcher import RuleMatcher
+from linkman.client.utils.proxy_manager import ProxyManager
 
 logger = get_logger("client")
 
@@ -61,8 +62,14 @@ class Client:
             server_port=config.client.server_port,
             mode_manager=self._mode_manager,
             tls_enabled=config.tls.enabled,
-            websocket_enabled=config.tls.enabled,  # WebSocket is only available with TLS
+            websocket_enabled=getattr(config.tls, 'websocket_enabled', False),  # Use websocket_enabled from config
             websocket_path=config.tls.websocket_path,
+        )
+
+        # Initialize proxy manager
+        self._proxy_manager = ProxyManager(
+            host=config.client.local_host,
+            port=config.client.local_port
         )
 
         self._running = False
@@ -94,6 +101,9 @@ class Client:
             self._config.client.local_port,
         )
 
+        # Set system proxy
+        self._proxy_manager.set_proxy()
+
         self._running = True
 
         logger.info(
@@ -109,6 +119,9 @@ class Client:
         logger.info("Stopping LinkMan client...")
 
         await self._proxy.stop()
+
+        # Restore system proxy
+        self._proxy_manager.restore_proxy()
 
         self._running = False
 

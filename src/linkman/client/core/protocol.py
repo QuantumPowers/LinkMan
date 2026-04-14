@@ -46,7 +46,7 @@ class ClientProtocol:
     """
 
     HANDSHAKE_TIMEOUT = 30
-    BUFFER_SIZE = 65536
+    BUFFER_SIZE = 131072  # Increased buffer size for better performance
 
     def __init__(
         self,
@@ -137,6 +137,8 @@ class ClientProtocol:
                     # Don't verify certificate for now (can be configured later)
                     ssl_context.check_hostname = False
                     ssl_context.verify_mode = ssl.CERT_NONE
+                    # Set minimum TLS version to TLS 1.2
+                    ssl_context.min_version = ssl.TLSVersion.TLSv1_2
                     logger.info("TLS enabled for client connection")
 
                 # Use WebSocket if enabled
@@ -144,7 +146,9 @@ class ClientProtocol:
                     import aiohttp
                     
                     # Create WebSocket connection
-                    ws_url = f"{'wss' if self._tls_enabled else 'ws'}://{server_host}:{server_port}{self._websocket_path}"
+                    # WebSocket uses port + 1
+                    websocket_port = server_port + 1
+                    ws_url = f"{'wss' if self._tls_enabled else 'ws'}://{server_host}:{websocket_port}{self._websocket_path}"
                     logger.info(f"Connecting to WebSocket at {ws_url}")
                     
                     session = aiohttp.ClientSession()
@@ -256,16 +260,24 @@ class ClientProtocol:
             return
 
         try:
+            total_sent = 0
             while not self._is_closed:
                 data = await self._target_reader.read(self.BUFFER_SIZE)
                 if not data:
                     break
 
                 # Optimize: write encrypted data in one go
-                encrypted = self._cipher.encrypt_packet(data)
-                self._writer.write(encrypted)
-                await self._writer.drain()
+                await self._write_encrypted(data)
                 self._bytes_sent += len(data)
+                total_sent += len(data)
+                
+                # Drain only when we have significant data to write
+                if total_sent >= self.BUFFER_SIZE * 2:
+                    # For WebSocket, no need to drain
+                    if not (hasattr(self, '_websocket_enabled') and self._websocket_enabled):
+                        if self._writer:
+                            await self._writer.drain()
+                    total_sent = 0
 
         except asyncio.CancelledError:
             pass
@@ -280,12 +292,28 @@ class ClientProtocol:
 
         try:
             buffer = b""
+            total_received = 0
             while not self._is_closed:
-                chunk = await self._reader.read(self.BUFFER_SIZE)
-                if not chunk:
-                    if buffer:
-                        logger.debug("Incomplete packet when closing connection")
-                    break
+                # Handle WebSocket connection
+                if hasattr(self, '_websocket_enabled') and self._websocket_enabled and hasattr(self, '_websocket'):
+                    msg = await self._websocket.receive()
+                    if msg.type == self._websocket.MSG_BINARY:
+                        chunk = msg.data
+                    elif msg.type in (self._websocket.MSG_CLOSED, self._websocket.MSG_ERROR):
+                        if buffer:
+                            logger.debug("Incomplete packet when closing connection")
+                        break
+                    else:
+                        continue
+                else:
+                    # Handle regular TCP connection
+                    if self._reader is None:
+                        break
+                    chunk = await self._reader.read(self.BUFFER_SIZE)
+                    if not chunk:
+                        if buffer:
+                            logger.debug("Incomplete packet when closing connection")
+                        break
 
                 buffer += chunk
                 
@@ -296,13 +324,15 @@ class ClientProtocol:
                         if payload:
                             self._target_writer.write(payload)
                             self._bytes_received += len(payload)
+                            total_received += len(payload)
                     except ValueError:
                         # Incomplete packet, continue reading
                         break
                 
-                # Drain only when we have data to write
-                if self._bytes_received % (self.BUFFER_SIZE * 4) == 0:
+                # Drain only when we have significant data to write
+                if total_received >= self.BUFFER_SIZE * 2:
                     await self._target_writer.drain()
+                    total_received = 0
 
         except asyncio.CancelledError:
             pass

@@ -8,7 +8,8 @@ buffer_size = 65536
 
 [crypto]
 cipher = "aes-256-gcm"
-key = "XC7FTO_gpH5L8fnCgPWmJiC0rTu5jqFgcRjug8dMF6k"
+key = "0cA79NL8upSMXq7vyFHy1zvmtpp3usUaF99nq07gWXs"
+
 
 [traffic]
 enabled = true
@@ -30,7 +31,8 @@ backup_count = 5
 enabled = true
 cert_file = ""
 key_file = ""
-domain = ""
+domain = "43.163.201.246"
+websocket_enabled = false
 websocket_path = "/api/ws"
 
 [client]

@@ -196,28 +196,19 @@ class Server:
             try:
                 from aiohttp import web
                 
-                async def websocket_handler(request):
-                    # Add common HTTP headers to disguise as regular web traffic
-                    ws = web.WebSocketResponse(
-                        headers={
-                            'Server': 'nginx',
-                            'X-Powered-By': 'PHP/7.4.33',
-                            'Content-Type': 'application/json'
-                        }
-                    )
-                    await ws.prepare(request)
-                    await self._websocket_handler.handle_websocket(ws)
-                    return ws
-                
                 app = web.Application()
                 websocket_path = self._config.tls.websocket_path or "/api/ws"
-                app.add_routes([web.get(websocket_path, websocket_handler)])
+                app.add_routes([web.get(websocket_path, self._websocket_handler.handle_websocket)])
                 
-                # Start WebSocket server on the same port as TCP server
-                self._websocket_app = app
+                # Start WebSocket server on a different port
+                websocket_port = self._config.server.port + 1
+                runner = web.AppRunner(app)
+                await runner.setup()
+                site = web.TCPSite(runner, self._config.server.host, websocket_port, ssl_context=ssl_context)
+                await site.start()
                 
-                # Note: WebSocket server is now integrated with the main server
-                logger.info(f"WebSocket support enabled at {websocket_path}")
+                self._websocket_server = runner
+                logger.info(f"WebSocket support enabled at ws://{self._config.server.host}:{websocket_port}{websocket_path}")
             except Exception as e:
                 logger.warning(f"Failed to start WebSocket server: {e}")
                 logger.info("WebSocket support disabled")

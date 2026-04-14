@@ -52,6 +52,7 @@ client = [
 [project.scripts]
 linkman-server = "linkman.server.main:main"
 linkman-client = "linkman.client.main:main"
+linkman-gui = "linkman.client.gui.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
