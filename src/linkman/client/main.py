@@ -172,18 +172,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--server-host",
-        required=True,
         help="Server host",
     )
     parser.add_argument(
         "--server-port",
         type=int,
-        default=8388,
         help="Server port",
     )
     parser.add_argument(
         "--key",
-        required=True,
         help="Encryption key (base64)",
     )
     parser.add_argument(
@@ -205,11 +202,17 @@ def main() -> None:
 
     config = Config.load(args.config)
 
-    config.client.local_host = args.local_host
-    config.client.local_port = args.local_port
-    config.client.server_host = args.server_host
-    config.client.server_port = args.server_port
-    config.crypto.key = args.key
+    # Override with command line arguments if provided
+    if args.local_host:
+        config.client.local_host = args.local_host
+    if args.local_port:
+        config.client.local_port = args.local_port
+    if args.server_host:
+        config.client.server_host = args.server_host
+    if args.server_port:
+        config.client.server_port = args.server_port
+    if args.key:
+        config.crypto.key = args.key
 
     client = Client(config)
     client.set_mode(ProxyMode(args.mode))

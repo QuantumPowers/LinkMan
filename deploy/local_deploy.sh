@@ -9,7 +9,9 @@ set -e
 # Get current user
 SERVICE_USER="$(whoami)"
 
-DEPLOY_DIR="$HOME/linkman"
+# Get script directory
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+DEPLOY_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG_FILE="$DEPLOY_DIR/linkman.toml"
 ENV_FILE="$DEPLOY_DIR/.env"
 
@@ -65,18 +67,10 @@ else
 fi
 
 print_step "Installing dependencies"
-# Create deployment directory if it doesn't exist
-if [ ! -d "$DEPLOY_DIR" ]; then
-    if mkdir -p "$DEPLOY_DIR" && chown -R "$SERVICE_USER:$SERVICE_USER" "$DEPLOY_DIR"; then
-        print_success "Deployment directory created"
-    else
-        print_error "Failed to create deployment directory"
-        exit 1
-    fi
-fi
+# Change to project directory
+cd "$DEPLOY_DIR"
 
 # Create virtual environment
-cd "$DEPLOY_DIR"
 if [ ! -d "venv" ]; then
     if python3 -m venv venv; then
         print_success "Virtual environment created"
@@ -92,7 +86,7 @@ fi
 source venv/bin/activate
 
 # Install dependencies
-if pip install --upgrade pip && pip install -r requirements.txt && pip install .; then
+if pip install --upgrade pip && pip install -r "$DEPLOY_DIR/requirements.txt" && pip install "$DEPLOY_DIR"; then
     print_success "Dependencies installed successfully"
 else
     print_error "Failed to install dependencies"
@@ -115,7 +109,6 @@ SERVER_HOST="your-server-ip"
 SERVER_PORT=8388
 EOF
     chmod 600 "$ENV_FILE"
-    chown "$SERVICE_USER:$SERVICE_USER" "$ENV_FILE"
     print_success ".env file created"
 else
     print_success ".env file exists"
@@ -171,7 +164,6 @@ domain = "your-domain.com"
 websocket_path = "/api/ws"
 EOF
     chmod 600 "$CONFIG_FILE"
-    chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_FILE"
     print_success "Configuration file created"
 else
     print_success "Configuration file exists"
@@ -189,9 +181,9 @@ echo ""
 read -p "Server IP or domain: " SERVER_HOST
 if [ -n "$SERVER_HOST" ]; then
     # Update configuration file
-    sed -i "s/^server_host = \"[^"]*\"/server_host = \"$SERVER_HOST\"/" "$CONFIG_FILE"
+    sed -i '' "s|^server_host = \"[\"]*\"|server_host = \"$SERVER_HOST\"|" "$CONFIG_FILE"
     # Update .env file
-    sed -i "s/^SERVER_HOST=\"[\"]*\"/SERVER_HOST=\"$SERVER_HOST\"/" "$ENV_FILE"
+    sed -i '' "s|^SERVER_HOST=\"[\"]*\"|SERVER_HOST=\"$SERVER_HOST\"|" "$ENV_FILE"
     print_success "Server host updated to $SERVER_HOST"
 else
     print_error "Server host is required"
@@ -202,9 +194,9 @@ fi
 read -p "Encryption key: " ENCRYPTION_KEY
 if [ -n "$ENCRYPTION_KEY" ]; then
     # Update configuration file
-    sed -i "s/^key = \"[^"]*\"/key = \"$ENCRYPTION_KEY\"/" "$CONFIG_FILE"
+    sed -i '' "s|^key = \"[\"]*\"|key = \"$ENCRYPTION_KEY\"|" "$CONFIG_FILE"
     # Update .env file
-    sed -i "s/^ENCRYPTION_KEY=\"[\"]*\"/ENCRYPTION_KEY=\"$ENCRYPTION_KEY\"/" "$ENV_FILE"
+    sed -i '' "s|^ENCRYPTION_KEY=\"[\"]*\"|ENCRYPTION_KEY=\"$ENCRYPTION_KEY\"|" "$ENV_FILE"
     print_success "Encryption key updated"
 else
     print_error "Encryption key is required"
@@ -215,9 +207,9 @@ fi
 read -p "Server port (default: 8388): " SERVER_PORT
 if [ -n "$SERVER_PORT" ]; then
     # Update configuration file
-    sed -i "s/^server_port = [0-9]*/server_port = $SERVER_PORT/" "$CONFIG_FILE"
+    sed -i '' "s|^server_port = [0-9]*|server_port = $SERVER_PORT|" "$CONFIG_FILE"
     # Update .env file
-    sed -i "s/^SERVER_PORT=[0-9]*/SERVER_PORT=$SERVER_PORT/" "$ENV_FILE"
+    sed -i '' "s|^SERVER_PORT=[0-9]*|SERVER_PORT=$SERVER_PORT|" "$ENV_FILE"
     print_success "Server port updated to $SERVER_PORT"
 else
     print_success "Using default server port: 8388"
