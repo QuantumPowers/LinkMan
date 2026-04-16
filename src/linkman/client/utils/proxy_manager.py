@@ -227,6 +227,24 @@ class ProxyManager:
                         ["networksetup", "-setwebproxystate", "Wi-Fi", "off"],
                         check=True
                     )
+                else:
+                    # Extract host and port from output
+                    host = None
+                    port = None
+                    for line in output.splitlines():
+                        if "Server:" in line:
+                            host = line.split(":")[1].strip()
+                        elif "Port:" in line:
+                            port = line.split(":")[1].strip()
+                    if host and port:
+                        subprocess.run(
+                            ["networksetup", "-setwebproxy", "Wi-Fi", host, port],
+                            check=True
+                        )
+                        subprocess.run(
+                            ["networksetup", "-setwebproxystate", "Wi-Fi", "on"],
+                            check=True
+                        )
 
             # Restore secure web proxy
             if "secure_web_proxy" in self._original_settings:
@@ -236,6 +254,24 @@ class ProxyManager:
                         ["networksetup", "-setsecurewebproxystate", "Wi-Fi", "off"],
                         check=True
                     )
+                else:
+                    # Extract host and port from output
+                    host = None
+                    port = None
+                    for line in output.splitlines():
+                        if "Server:" in line:
+                            host = line.split(":")[1].strip()
+                        elif "Port:" in line:
+                            port = line.split(":")[1].strip()
+                    if host and port:
+                        subprocess.run(
+                            ["networksetup", "-setsecurewebproxy", "Wi-Fi", host, port],
+                            check=True
+                        )
+                        subprocess.run(
+                            ["networksetup", "-setsecurewebproxystate", "Wi-Fi", "on"],
+                            check=True
+                        )
 
             logger.info("macOS proxy settings restored successfully")
             return True

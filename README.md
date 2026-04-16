@@ -1,258 +1,268 @@
 # LinkMan VPN
 
-LinkMan 是一个基于 Shadowsocks 2022 协议的 VPN 客户端/服务器工具，提供安全、高效的网络代理服务。
+LinkMan is a high-performance, secure VPN implementation based on Shadowsocks 2022 protocol.
 
-## 功能特性
+## Features
 
-- ✅ 支持 Shadowsocks 2022 协议
-- ✅ 支持 AEAD 加密 (AES-256-GCM, ChaCha20-Poly1305)
-- ✅ 支持 TLS 加密
-- ✅ 支持 WebSocket 流量伪装
-- ✅ 支持 UDP 协议
-- ✅ 自动系统代理配置
-- ✅ 图形界面支持
-- ✅ 规则模式（选择性代理）
-- ✅ 全球模式（全部代理）
-- ✅ 直连模式（不使用代理）
-- ✅ 流量统计
-- ✅ 错误处理和重试机制
+- **High Performance**: Optimized async IO and buffer management for maximum throughput
+- **Secure**: Implements Shadowsocks 2022 protocol with AEAD encryption
+- **Flexible**: Supports multiple protocols and transport methods
+- **Reliable**: Connection pooling and health checking for improved reliability
+- **Monitorable**: Comprehensive metrics collection and monitoring
+- **Extensible**: Modular architecture for easy extension
 
-## 安装
+## Architecture
 
-### 服务器端
+LinkMan consists of the following components:
 
-1. **克隆代码**
-   ```bash
-   git clone https://github.com/QuantumPowers/LinkMan.git
-   cd LinkMan
-   ```
+- **Client**: Local proxy that handles connections from applications
+- **Server**: Remote server that forwards connections to target destinations
+- **Shared**: Common code used by both client and server
 
-2. **运行部署脚本**
-   ```bash
-   sudo bash deploy/server_deploy.sh
-   ```
+### Protocol Stack
 
-3. **配置服务器**
-   部署脚本会自动生成配置文件，您可以根据需要修改 `/home/ubuntu/linkman/linkman.toml`。
+1. **Application Layer**: SOCKS5 proxy interface for applications
+2. **Protocol Layer**: Shadowsocks 2022 protocol implementation
+3. **Transport Layer**: TCP, TLS, and WebSocket support
+4. **Encryption Layer**: AEAD encryption with various algorithms
 
-### 客户端
+## Installation
 
-1. **克隆代码**
-   ```bash
-   git clone https://github.com/QuantumPowers/LinkMan.git
-   cd LinkMan
-   ```
+### Prerequisites
 
-2. **创建虚拟环境**
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
+- Python 3.8+
+- pip
 
-3. **安装依赖**
-   ```bash
-   pip install -e .
-   ```
-
-4. **配置客户端**
-   复制配置文件示例并修改：
-   ```bash
-   cp linkman.toml.example linkman.toml
-   # 编辑 linkman.toml 文件，设置服务器地址和密钥
-   ```
-
-## 配置说明
-
-### 服务器配置 (`linkman.toml`)
-
-```toml
-[server]
-host = "0.0.0.0"  # 监听所有网络接口
-port = 8388        # 服务器端口
-management_port = 8389  # 管理 API 端口
-
-[crypto]
-cipher = "aes-256-gcm"  # 加密算法
-key = "your-encryption-key"  # 加密密钥
-
-[tls]
-enabled = true  # 启用 TLS
-cert_file = ""  # 证书文件（可选）
-key_file = ""  # 私钥文件（可选）
-domain = "your-domain.com"  # 域名（可选）
-```
-
-### 客户端配置 (`linkman.toml`)
-
-```toml
-[client]
-local_host = "127.0.0.1"  # 本地监听地址
-local_port = 1080         # 本地 SOCKS5 端口
-server_host = "your-server-ip"  # 服务器 IP
-server_port = 8388        # 服务器端口
-
-[crypto]
-cipher = "aes-256-gcm"  # 加密算法
-key = "your-encryption-key"  # 加密密钥（必须与服务器一致）
-
-[tls]
-enabled = true  # 启用 TLS
-websocket_enabled = false  # 启用 WebSocket
-```
-
-## 使用方法
-
-### 命令行客户端
-
-1. **启动客户端（全球模式）**
-   ```bash
-   source venv/bin/activate
-   python -m linkman.client.main -c linkman.toml --mode global
-   ```
-
-2. **启动客户端（规则模式）**
-   ```bash
-   source venv/bin/activate
-   python -m linkman.client.main -c linkman.toml --mode rules
-   ```
-
-3. **启动客户端（直连模式）**
-   ```bash
-   source venv/bin/activate
-   python -m linkman.client.main -c linkman.toml --mode direct
-   ```
-
-### 图形界面
-
-1. **启动图形界面**
-   ```bash
-   source venv/bin/activate
-   linkman-gui
-   ```
-
-2. **使用步骤**
-   - 选择代理模式（全球/规则/直连）
-   - 点击 "Start VPN" 按钮启动服务
-   - 客户端会自动配置系统代理
-   - 点击 "Stop VPN" 按钮停止服务，系统代理会自动恢复
-
-## 测试连接
-
-1. **测试代理连接**
-   ```bash
-   curl -x socks5://127.0.0.1:1080 http://httpbin.org/ip
-   ```
-
-2. **预期结果**
-   返回的 IP 应该是服务器的 IP，说明代理成功。
-
-## 常见问题
-
-### 1. 连接失败
-
-**可能原因**：
-- 服务器 IP 或端口配置错误
-- 密钥不匹配
-- 服务器防火墙阻止了连接
-- 网络连接问题
-
-**解决方案**：
-- 检查服务器配置和客户端配置
-- 确保服务器防火墙开放了对应端口
-- 测试服务器网络连接
-
-### 2. 代理速度慢
-
-**可能原因**：
-- 服务器网络带宽不足
-- 服务器负载过高
-- 网络延迟高
-
-**解决方案**：
-- 选择网络条件更好的服务器
-- 优化服务器配置
-- 调整加密算法（ChaCha20-Poly1305 可能在某些设备上更快）
-
-### 3. 系统代理未自动配置
-
-**可能原因**：
-- 权限不足
-- 平台不支持（目前仅支持 macOS）
-
-**解决方案**：
-- 以管理员权限运行客户端
-- 手动配置系统代理
-
-## 故障排除
-
-### 查看客户端日志
+### Install from Source
 
 ```bash
-# 查看日志文件
-tail -f logs/linkman.log
+# Clone the repository
+git clone https://github.com/yourusername/linkman.git
+cd linkman
 
-# 或直接查看命令行输出
-python -m linkman.client.main -c linkman.toml --mode global
+# Install dependencies
+pip install -r requirements.txt
+
+# Install the package
+pip install -e .
 ```
 
-### 查看服务器日志
+### Install from PyPI
 
 ```bash
-# 查看系统服务日志
-sudo journalctl -u linkman -f
+pip install linkman-vpn
 ```
 
-### 检查网络连接
+## Usage
 
-```bash
-# 测试服务器连接
-ping your-server-ip
+### Server Setup
 
-# 测试端口连接
-telnet your-server-ip 8388
-
-# 检查本地代理端口
-lsof -i :1080
-```
-
-## 性能优化
-
-1. **调整缓冲区大小**
-   在 `src/linkman/client/core/protocol.py` 中修改 `BUFFER_SIZE` 值。
-
-2. **选择合适的加密算法**
-   - `aes-256-gcm`：安全性高，适合高性能设备
-   - `chacha20-poly1305`：速度快，适合低性能设备
-
-3. **优化服务器网络设置**
+1. **Generate a master key**:
    ```bash
-   sudo sysctl -w net.core.netdev_max_backlog=4096
-   sudo sysctl -w net.core.rmem_max=8388608
-   sudo sysctl -w net.core.wmem_max=8388608
+   linkman-server generate-key
    ```
 
-## 安全建议
+2. **Create a configuration file** (`server_config.json`):
+   ```json
+   {
+     "server": {
+       "host": "0.0.0.0",
+       "port": 8388
+     },
+     "crypto": {
+       "key": "your-master-key-here",
+       "cipher": "aes-256-gcm"
+     },
+     "tls": {
+       "enabled": true,
+       "cert_file": "server.crt",
+       "key_file": "server.key",
+       "websocket_enabled": true,
+       "websocket_path": "/linkman"
+     }
+   }
+   ```
 
-1. **定期更换密钥**
-   定期更新 `crypto.key` 以提高安全性。
+3. **Start the server**:
+   ```bash
+   linkman-server start --config server_config.json
+   ```
 
-2. **使用强密钥**
-   密钥应该是随机生成的，长度至少 32 字节。
+### Client Setup
 
-3. **启用 TLS**
-   启用 TLS 加密可以提高流量安全性。
+1. **Create a configuration file** (`client_config.json`):
+   ```json
+   {
+     "client": {
+       "local_host": "127.0.0.1",
+       "local_port": 1080,
+       "server_host": "your-server-ip",
+       "server_port": 8388
+     },
+     "crypto": {
+       "key": "your-master-key-here",
+       "cipher": "aes-256-gcm"
+     },
+     "tls": {
+       "enabled": true,
+       "websocket_enabled": true,
+       "websocket_path": "/linkman"
+     }
+   }
+   ```
 
-4. **使用 WebSocket**
-   启用 WebSocket 可以更好地伪装流量。
+2. **Start the client**:
+   ```bash
+   linkman-client start --config client_config.json
+   ```
 
-## 许可证
+### Configuration Options
 
-MIT License
+#### Server Configuration
 
-## 贡献
+| Option | Description | Default |
+|--------|-------------|---------|
+| `server.host` | Server hostname or IP | "0.0.0.0" |
+| `server.port` | Server port | 8388 |
+| `crypto.key` | Master encryption key | - |
+| `crypto.cipher` | Encryption algorithm | "aes-256-gcm" |
+| `tls.enabled` | Enable TLS | false |
+| `tls.cert_file` | TLS certificate file | "" |
+| `tls.key_file` | TLS private key file | "" |
+| `tls.websocket_enabled` | Enable WebSocket | false |
+| `tls.websocket_path` | WebSocket path | "/linkman" |
 
-欢迎提交 Issue 和 Pull Request！
+#### Client Configuration
 
-## 联系方式
+| Option | Description | Default |
+|--------|-------------|---------|
+| `client.local_host` | Local proxy host | "127.0.0.1" |
+| `client.local_port` | Local proxy port | 1080 |
+| `client.server_host` | Server hostname or IP | - |
+| `client.server_port` | Server port | 8388 |
+| `crypto.key` | Master encryption key | - |
+| `crypto.cipher` | Encryption algorithm | "aes-256-gcm" |
+| `tls.enabled` | Enable TLS | false |
+| `tls.websocket_enabled` | Enable WebSocket | false |
+| `tls.websocket_path` | WebSocket path | "/linkman" |
 
-如有问题，请通过 GitHub Issues 联系我们。
+## Advanced Features
+
+### Connection Pooling
+
+LinkMan uses connection pooling to improve performance and reduce connection overhead. The connection pool automatically manages and reuses connections, providing better performance for high-traffic scenarios.
+
+### Health Checking
+
+LinkMan includes a health checking system that monitors server availability and performance. It can automatically detect and handle server failures, providing better reliability.
+
+### Monitoring
+
+LinkMan provides comprehensive metrics collection and monitoring capabilities, including:
+
+- System metrics (CPU, memory, network)
+- Application metrics (connections, traffic, latency)
+- Alerting based on thresholds
+
+### Key Management
+
+LinkMan includes a secure key management system that supports:
+
+- Key rotation
+- Key expiration
+- Encrypted key storage
+- Key usage auditing
+
+## Development
+
+### Directory Structure
+
+```
+linkman/
+├── src/
+│   ├── linkman/
+│   │   ├── client/          # Client-side code
+│   │   ├── server/          # Server-side code
+│   │   ├── shared/          # Shared code
+│   │   └── __init__.py
+├── tests/                   # Test files
+├── requirements.txt         # Dependencies
+├── setup.py                 # Package setup
+└── README.md                # This file
+```
+
+### Running Tests
+
+```bash
+pytest tests/
+```
+
+### Code Style
+
+LinkMan follows PEP 8 code style guidelines. Use `black` and `flake8` to ensure code quality:
+
+```bash
+black src/
+flake8 src/
+```
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+### Development Workflow
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run tests
+5. Submit a Pull Request
+
+## License
+
+LinkMan is licensed under the MIT License. See the `LICENSE` file for details.
+
+## Security
+
+### Security Features
+
+- AEAD encryption for all traffic
+- Perfect forward secrecy
+- TLS encryption for transport
+- WebSocket support for obfuscation
+- Secure key management
+
+### Reporting Security Issues
+
+If you discover a security issue, please email security@linkman-vpn.com instead of opening an issue.
+
+## Support
+
+### Documentation
+
+- [User Guide](docs/user_guide.md)
+- [Developer Guide](docs/developer_guide.md)
+- [API Reference](docs/api_reference.md)
+
+### Community
+
+- [GitHub Issues](https://github.com/yourusername/linkman/issues)
+- [Discord](https://discord.gg/linkman)
+- [Forum](https://forum.linkman-vpn.com)
+
+## Acknowledgments
+
+LinkMan is based on the Shadowsocks 2022 protocol specification and draws inspiration from various open-source VPN implementations.
+
+## Roadmap
+
+### Upcoming Features
+
+- [ ] WireGuard protocol support
+- [ ] IPsec protocol support
+- [ ] Multi-platform GUI
+- [ ] Mobile apps (iOS, Android)
+- [ ] Cloud deployment tools
+- [ ] Advanced routing rules
+- [ ] Traffic analysis and optimization
+- [ ] Integration with popular authentication providers

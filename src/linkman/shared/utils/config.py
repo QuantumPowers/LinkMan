@@ -93,6 +93,7 @@ class TLSConfig:
     key_file: str = ""
     domain: str = ""
     websocket_path: str = "/linkman"
+    websocket_enabled: bool = False
 
 
 @dataclass
@@ -114,6 +115,7 @@ class Config:
     device: DeviceConfig = field(default_factory=DeviceConfig)
     log: LogConfig = field(default_factory=LogConfig)
     tls: TLSConfig = field(default_factory=TLSConfig)
+    protocol: str = "shadowsocks2022"
 
     _config_path: Path | None = field(default=None, repr=False)
 
@@ -281,7 +283,9 @@ class Config:
                 "key_file": self.tls.key_file,
                 "domain": self.tls.domain,
                 "websocket_path": self.tls.websocket_path,
+                "websocket_enabled": self.tls.websocket_enabled,
             },
+            "protocol": self.protocol,
         }
 
     @classmethod
@@ -354,7 +358,11 @@ class Config:
                 key_file=tl.get("key_file", config.tls.key_file),
                 domain=tl.get("domain", config.tls.domain),
                 websocket_path=tl.get("websocket_path", config.tls.websocket_path),
+                websocket_enabled=tl.get("websocket_enabled", config.tls.websocket_enabled),
             )
+
+        if "protocol" in data:
+            config.protocol = data["protocol"]
 
         return config
 
@@ -376,6 +384,10 @@ class Config:
                 KeyManager.from_base64(self.crypto.key)
             except Exception as e:
                 errors.append(f"Invalid crypto.key format: {e}")
+            
+            # Validate key strength
+            if len(self.crypto.key) < 32:
+                errors.append("crypto.key should be at least 32 characters long")
 
         if self.server.port < 1 or self.server.port > 65535:
             errors.append(f"Invalid server port: {self.server.port}")

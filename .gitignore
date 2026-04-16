@@ -1,131 +1,66 @@
-# LinkMan VPN - .gitignore
+# LinkMan VPN .gitignore file
 
 # Virtual environments
 venv/
 env/
 
-# Configuration files
-*.toml
-!.toml.example
-
-# Environment variables
-.env
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
 # Logs
 logs/
 *.log
 
-# Certificates
+# Configuration files (contains sensitive information)
+linkman.toml
+linkman-*.toml
+test-*.toml
+~/.linkman/
+*.json
+!linkman.toml.example
+
+# Certificates and keys
 *.pem
 *.key
 *.crt
 
-# Python files
+# Compiled files
 __pycache__/
 *.pyc
 
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Build files
+# Build artifacts
 build/
 dist/
 *.egg-info/
 
-# Test files
-.coverage
-.pytest_cache/
-
-# Deployment files
-# deploy/*.sh
-# !deploy/*.sh.example
-
-# Generated files
-generated/
-
-# Backup files
-*.bak
-*.old
-
-# Temporary files
-*.tmp
-*.temp
-
-# Docker files
-Dockerfile
+# Docker
 .dockerignore
 
-# CI/CD files
-.github/
-.gitlab-ci.yml
-.travis.yml
-
-# Documentation build files
-docs/build/
-docs/source/_build/
-
-# Local development files
-local/
-development/
-
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-
-# Binary files
-*.exe
-*.dll
-*.so
-*.dylib
-
-# Large files
-*.zip
-*.tar.gz
-*.tar.bz2
-*.rar
-
-# macOS
+# OS specific files
 .DS_Store
-.AppleDouble
-.LSOverride
+Thumbs.db
 
-# Thumbnails
-._*
+# Environment variables
+.env
+.env.local
+.env.*.local
 
-# Files that might appear in the root of a volume
-.DocumentRevisions-V100
-.fseventsd
-.Spotlight-V100
-.TemporaryItems
-.Trashes
-.VolumeIcon.icns
-.com.apple.timemachine.donotpresent
+# Test files
+.coverage
+coverage.xml
+pytest_cache/
 
-# TypeScript
-*.tsbuildinfo
+# CI/CD
+.github/workflows/*.yml
 
-# Optional npm cache directory
-.npm
+# Deployment scripts (may contain sensitive information)
+restore_proxy.sh
+deploy/*.sh
 
-# Optional eslint cache
-.eslintcache
-
-# Optional stylelint cache
-.stylelintcache
-
-# Yarn
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/sdks
-!.yarn/versions
-.pnp.*
+# Temporary files
+/tmp
+/temp

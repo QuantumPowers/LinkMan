@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, Callable
 from linkman.shared.crypto.aead import AEADType
 from linkman.shared.crypto.keys import KeyManager
 from linkman.shared.protocol.types import Address, AddressType, ReplyCode
+from linkman.shared.protocol.manager import protocol_manager
 from linkman.shared.utils.logger import get_logger
-from linkman.client.core.protocol import ClientProtocol
 
 if TYPE_CHECKING:
     from linkman.client.proxy.modes import ModeManager
@@ -35,8 +35,8 @@ class LocalProxy:
     forwards them through the LinkMan tunnel.
     """
 
-    BUFFER_SIZE = 65536
-    HANDSHAKE_TIMEOUT = 30
+    BUFFER_SIZE = 65536  # 缓冲区大小（字节）
+    HANDSHAKE_TIMEOUT = 30  # 握手超时时间（秒）
 
     def __init__(
         self,
@@ -48,19 +48,21 @@ class LocalProxy:
         tls_enabled: bool = False,
         websocket_enabled: bool = False,
         websocket_path: str = "/linkman",
+        protocol: str = "shadowsocks2022",
     ):
         """
         Initialize local proxy.
 
         Args:
-            key: Encryption key
-            cipher_type: AEAD cipher type
-            server_host: Remote server host
-            server_port: Remote server port
-            mode_manager: Optional mode manager for routing
-            tls_enabled: Whether to use TLS
-            websocket_enabled: Whether to use WebSocket
-            websocket_path: WebSocket path
+            key: 加密密钥
+            cipher_type: AEAD加密类型
+            server_host: 远程服务器主机
+            server_port: 远程服务器端口
+            mode_manager: 可选的路由模式管理器
+            tls_enabled: 是否使用TLS
+            websocket_enabled: 是否使用WebSocket
+            websocket_path: WebSocket路径
+            protocol: 协议名称
         """
         self._key = key
         self._cipher_type = cipher_type
@@ -70,15 +72,16 @@ class LocalProxy:
         self._tls_enabled = tls_enabled
         self._websocket_enabled = websocket_enabled
         self._websocket_path = websocket_path
+        self._protocol = protocol
 
-        self._server = None
-        self._running = False
-        self._active_connections: set[asyncio.Task] = set()
-        self._connection_count = 0
-        self._bytes_sent = 0
-        self._bytes_received = 0
-        self._start_time = 0.0
-        self._on_stats_update: Callable | None = None
+        self._server = None  # 服务器实例
+        self._running = False  # 是否正在运行
+        self._active_connections: set[asyncio.Task] = set()  # 活跃连接
+        self._connection_count = 0  # 总连接数
+        self._bytes_sent = 0  # 发送的字节数
+        self._bytes_received = 0  # 接收的字节数
+        self._start_time = 0.0  # 启动时间
+        self._on_stats_update: Callable | None = None  # 统计更新回调
 
     @property
     def active_connections(self) -> int:
@@ -109,6 +112,44 @@ class LocalProxy:
         """
         if self._running:
             return
+
+        # Try to kill any process using the port
+        import socket
+        import subprocess
+        import sys
+        
+        def is_port_in_use(port: int) -> bool:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                return s.connect_ex(('127.0.0.1', port)) == 0
+        
+        if is_port_in_use(port):
+            logger.warning(f"Port {port} is already in use, attempting to free it...")
+            try:
+                # Try to kill process using the port (macOS/Linux)
+                if sys.platform == 'darwin':  # macOS
+                    result = subprocess.run(
+                        ['lsof', '-ti', f'tcp:{port}'],
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.stdout:
+                        pids = result.stdout.strip().split('\n')
+                        for pid in pids:
+                            if pid:
+                                subprocess.run(['kill', '-9', pid], capture_output=True)
+                                logger.info(f"Killed process {pid} using port {port}")
+                else:  # Linux
+                    result = subprocess.run(
+                        ['fuser', '-k', f'{port}/tcp'],
+                        capture_output=True,
+                        text=True
+                    )
+                    logger.info(f"Freed port {port}")
+                
+                # Wait a bit for the port to be released
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.warning(f"Could not free port {port}: {e}")
 
         self._start_time = time.time()
         self._server = await asyncio.start_server(
@@ -161,7 +202,8 @@ class LocalProxy:
         self._connection_count += 1
 
         client_addr = writer.get_extra_info("peername")
-        logger.debug(f"New connection from {client_addr}")
+        # Only log new connections at info level to avoid excessive logging
+        # logger.info(f"New connection from {client_addr}")
 
         protocol = None
 
@@ -176,9 +218,10 @@ class LocalProxy:
                 should_proxy = await self._mode_manager.should_proxy(target)
 
             if should_proxy:
-                protocol = ClientProtocol(
-                    self._key, 
-                    self._cipher_type, 
+                protocol = protocol_manager.create_client_protocol(
+                    self._protocol,
+                    key=self._key,
+                    cipher_type=self._cipher_type,
                     tls_enabled=self._tls_enabled,
                     websocket_enabled=self._websocket_enabled,
                     websocket_path=self._websocket_path,

@@ -99,10 +99,10 @@ def create_app(
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
     )
 
     @app.get("/", tags=["Root"])
@@ -163,20 +163,24 @@ def create_app(
         return traffic_manager.get_stats()
 
     @app.get("/api/traffic/top", tags=["Traffic"])
-    async def get_top_clients(limit: int = 10):
-        """Get top clients by traffic."""
-        if not traffic_manager:
-            raise HTTPException(status_code=503, detail="Traffic manager not available")
+async def get_top_clients(limit: int = 10):
+    """Get top clients by traffic."""
+    if not traffic_manager:
+        raise HTTPException(status_code=503, detail="Traffic manager not available")
 
-        top = traffic_manager.get_top_clients(limit)
-        return [
-            {
-                "client_id": cid,
-                "total_mb": round(stats.total_mb, 2),
-                "total_gb": round(stats.total_gb, 3),
-            }
-            for cid, stats in top
-        ]
+    # Validate limit parameter
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="Limit must be between 1 and 100")
+
+    top = traffic_manager.get_top_clients(limit)
+    return [
+        {
+            "client_id": cid,
+            "total_mb": round(stats.total_mb, 2),
+            "total_gb": round(stats.total_gb, 3),
+        }
+        for cid, stats in top
+    ]
 
     @app.get("/api/devices", response_model=DeviceListResponse, tags=["Devices"])
     async def get_devices():
@@ -201,27 +205,35 @@ def create_app(
         )
 
     @app.get("/api/devices/{device_id}", tags=["Devices"])
-    async def get_device(device_id: str):
-        """Get device by ID."""
-        if not device_manager:
-            raise HTTPException(status_code=503, detail="Device manager not available")
+async def get_device(device_id: str):
+    """Get device by ID."""
+    if not device_manager:
+        raise HTTPException(status_code=503, detail="Device manager not available")
 
-        device = device_manager.get_device(device_id)
-        if not device:
-            raise HTTPException(status_code=404, detail="Device not found")
+    # Validate device_id format
+    if not device_id or len(device_id) > 50 or not device_id.isalnum():
+        raise HTTPException(status_code=400, detail="Invalid device ID format. Must be alphanumeric and less than 50 characters.")
 
-        return device.to_dict()
+    device = device_manager.get_device(device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    return device.to_dict()
 
     @app.delete("/api/devices/{device_id}", tags=["Devices"])
-    async def remove_device(device_id: str):
-        """Remove a device."""
-        if not device_manager:
-            raise HTTPException(status_code=503, detail="Device manager not available")
+async def remove_device(device_id: str):
+    """Remove a device."""
+    if not device_manager:
+        raise HTTPException(status_code=503, detail="Device manager not available")
 
-        if not device_manager.unregister_device(device_id):
-            raise HTTPException(status_code=404, detail="Device not found")
+    # Validate device_id format
+    if not device_id or len(device_id) > 50 or not device_id.isalnum():
+        raise HTTPException(status_code=400, detail="Invalid device ID format. Must be alphanumeric and less than 50 characters.")
 
-        return {"status": "removed", "device_id": device_id}
+    if not device_manager.unregister_device(device_id):
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    return {"status": "removed", "device_id": device_id}
 
     @app.get("/api/sessions", tags=["Sessions"])
     async def get_sessions():

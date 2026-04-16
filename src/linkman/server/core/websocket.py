@@ -15,6 +15,8 @@ from aiohttp import web
 from linkman.shared.crypto.aead import AEADCipher, AEADType
 from linkman.shared.protocol.types import Address, Command, ProtocolError, ReplyCode, Request, Response
 from linkman.shared.utils.logger import get_logger
+from linkman.server.manager.auth import AuthManager
+from linkman.server.core.connection_adapters import WebSocketServerConnectionAdapter
 
 logger = get_logger("server.websocket")
 
@@ -24,6 +26,13 @@ class WebSocketHandler:
     WebSocket handler for LinkMan VPN.
     
     Handles WebSocket connections and relays data to/from the VPN protocol.
+    
+    Features:
+    - WebSocket connection management
+    - Message encryption and decryption
+    - Authentication validation
+    - Data relay between client and target servers
+    - Error handling and connection cleanup
     """
 
     def __init__(
@@ -31,6 +40,7 @@ class WebSocketHandler:
         key: bytes,
         cipher_type: AEADType,
         connection_handler: "ConnectionHandler",
+        auth_manager: Optional["AuthManager"] = None,
     ):
         """
         Initialize WebSocket handler.
@@ -39,10 +49,40 @@ class WebSocketHandler:
             key: Encryption key
             cipher_type: AEAD cipher type
             connection_handler: Connection handler instance
+            auth_manager: Authentication manager instance
         """
         self._key = key
         self._cipher_type = cipher_type
         self._connection_handler = connection_handler
+        self._auth_manager = auth_manager
+
+    def _validate_auth(self, auth_header: Optional[str]) -> bool:
+        """
+        Validate authentication header.
+
+        Args:
+            auth_header: Authorization header value
+
+        Returns:
+            True if authentication is valid, False otherwise
+        """
+        if not auth_header:
+            return False
+
+        # Validate Bearer token format
+        try:
+            scheme, token = auth_header.split(' ', 1)
+            if scheme.lower() != 'bearer':
+                return False
+            
+            # Use AuthManager to validate token if available
+            if self._auth_manager:
+                return self._auth_manager.verify_identity(token)
+            
+            # Fallback: if no AuthManager, at least check if token is not empty
+            return bool(token)
+        except ValueError:
+            return False
 
     async def handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
         """
@@ -54,6 +94,11 @@ class WebSocketHandler:
         Returns:
             WebSocket response
         """
+        # Check authentication
+        auth_header = request.headers.get('Authorization')
+        if not self._validate_auth(auth_header):
+            return web.Response(status=401, text="Unauthorized")
+
         # Add common HTTP headers to disguise as regular web traffic
         ws = web.WebSocketResponse(
             headers={
@@ -74,59 +119,84 @@ class WebSocketHandler:
         target_writer: Optional[asyncio.StreamWriter] = None
 
         try:
+            # Create WebSocket connection adapter
+            ws_adapter = WebSocketServerConnectionAdapter(ws, client_addr)
+            
             # Handle WebSocket messages
-            async for msg in ws:
-                if msg.type == aiohttp.WSMsgType.BINARY:
+            while not ws.closed:
+                try:
+                    # 使用适配器读取数据
+                    data = await ws_adapter.read(65536)
+                    
                     if not cipher:
                         # First message should be the salt
-                        if len(msg.data) < 16:
+                        if len(data) < 16:
                             logger.warning(f"Invalid WebSocket message from {client_addr}: too short")
                             await ws.close(code=1008, message=b"Invalid message")
                             return ws
 
-                        salt = msg.data[:16]
-                        cipher = AEADCipher(self._cipher_type, self._key, salt)
-                        logger.debug(f"WebSocket handshake completed with {client_addr}")
+                        salt = data[:16]
+                        try:
+                            cipher = AEADCipher(self._cipher_type, self._key, salt)
+                            logger.debug(f"WebSocket handshake completed with {client_addr}")
+                        except Exception as e:
+                            logger.error(f"Error creating cipher for {client_addr}: {e}")
+                            await ws.close(code=1008, message=b"Handshake failed")
+                            return ws
                     else:
                         # Process encrypted data
                         try:
-                            payload, _ = cipher.decrypt_packet(msg.data)
+                            payload, _ = cipher.decrypt_packet(data)
                             if not payload:
                                 continue
 
                             # Handle request
-                            request = Request.from_bytes(payload)
-                            if request.command == Command.CONNECT:
-                                await self._handle_connect(ws, cipher, request.address, client_addr)
-                            elif request.command == Command.UDP_ASSOCIATE:
-                                await self._handle_udp_associate(ws, cipher, request.address, client_addr)
-                            else:
-                                logger.warning(f"Unknown command: {request.command}")
-                                response = Response.error(ReplyCode.COMMAND_NOT_SUPPORTED)
+                            try:
+                                request = Request.from_bytes(payload)
+                                if request.command == Command.CONNECT:
+                                    await self._handle_connect(ws, cipher, request.address, client_addr)
+                                elif request.command == Command.UDP_ASSOCIATE:
+                                    await self._handle_udp_associate(ws, cipher, request.address, client_addr)
+                                else:
+                                    logger.warning(f"Unknown command: {request.command}")
+                                    response = Response.error(ReplyCode.COMMAND_NOT_SUPPORTED)
+                                    encrypted_response = cipher.encrypt_packet(response.to_bytes())
+                                    await ws_adapter.write(encrypted_response)
+                            except Exception as e:
+                                logger.error(f"Error parsing request from {client_addr}: {e}")
+                                response = Response.error(ReplyCode.GENERAL_FAILURE)
                                 encrypted_response = cipher.encrypt_packet(response.to_bytes())
-                                await ws.send_bytes(encrypted_response)
+                                await ws_adapter.write(encrypted_response)
 
                         except Exception as e:
-                            logger.error(f"Error processing WebSocket message: {e}")
-                            response = Response.error(ReplyCode.GENERAL_FAILURE)
-                            encrypted_response = cipher.encrypt_packet(response.to_bytes())
-                            await ws.send_bytes(encrypted_response)
-
-                elif msg.type == aiohttp.WSMsgType.ERROR:
-                    logger.error(f"WebSocket error from {client_addr}: {ws.exception()}")
-                elif msg.type == aiohttp.WSMsgType.CLOSED:
-                    logger.info(f"WebSocket connection closed from {client_addr}")
-                    break
+                            logger.error(f"Error processing WebSocket message from {client_addr}: {e}")
+                            if cipher:
+                                response = Response.error(ReplyCode.GENERAL_FAILURE)
+                                encrypted_response = cipher.encrypt_packet(response.to_bytes())
+                                await ws_adapter.write(encrypted_response)
+                            await ws.close(code=1008, message=b"Processing error")
+                            return ws
+                except RuntimeError as e:
+                    if "closed" in str(e):
+                        logger.info(f"WebSocket connection closed from {client_addr}")
+                        break
+                    raise
 
         except Exception as e:
-            logger.error(f"Error handling WebSocket connection: {e}")
+            logger.error(f"Error handling WebSocket connection from {client_addr}: {e}")
         finally:
             # Clean up
             if target_writer:
-                target_writer.close()
-                await target_writer.wait_closed()
+                try:
+                    target_writer.close()
+                    await target_writer.wait_closed()
+                except Exception as e:
+                    logger.debug(f"Error closing target writer: {e}")
             if ws and not ws.closed:
-                await ws.close()
+                try:
+                    await ws.close()
+                except Exception as e:
+                    logger.debug(f"Error closing WebSocket: {e}")
 
         return ws
 
@@ -141,24 +211,54 @@ class WebSocketHandler:
             address: Target address
             client_addr: Client address
         """
+        target_reader: Optional[asyncio.StreamReader] = None
+        target_writer: Optional[asyncio.StreamWriter] = None
+        
         try:
             # Check access
-            if not await self._connection_handler.check_access(client_addr, address):
-                response = Response.error(ReplyCode.CONNECTION_NOT_ALLOWED)
+            try:
+                if not await self._connection_handler.check_access(client_addr, address):
+                    response = Response.error(ReplyCode.CONNECTION_NOT_ALLOWED)
+                    encrypted_response = cipher.encrypt_packet(response.to_bytes())
+                    await ws_adapter.write(encrypted_response)
+                    return
+            except Exception as e:
+                logger.error(f"Error checking access for {client_addr} -> {address}: {e}")
+                response = Response.error(ReplyCode.GENERAL_FAILURE)
+                encrypted_response = cipher.encrypt_packet(response.to_bytes())
+                await ws_adapter.write(encrypted_response)
+                return
+
+            # Connect to target
+            try:
+                target_reader, target_writer = await asyncio.wait_for(
+                    asyncio.open_connection(address.host, address.port),
+                    timeout=15,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Connection timeout for {client_addr} -> {address}")
+                response = Response.error(ReplyCode.TTL_EXPIRED)
+                encrypted_response = cipher.encrypt_packet(response.to_bytes())
+                await ws.send_bytes(encrypted_response)
+                return
+            except Exception as e:
+                logger.error(f"Error connecting to {address} for {client_addr}: {e}")
+                response = Response.error(ReplyCode.GENERAL_FAILURE)
                 encrypted_response = cipher.encrypt_packet(response.to_bytes())
                 await ws.send_bytes(encrypted_response)
                 return
 
-            # Connect to target
-            target_reader, target_writer = await asyncio.wait_for(
-                asyncio.open_connection(address.host, address.port),
-                timeout=15,
-            )
-
             # Send success response
-            response = Response.success()
-            encrypted_response = cipher.encrypt_packet(response.to_bytes())
-            await ws.send_bytes(encrypted_response)
+            try:
+                response = Response.success()
+                encrypted_response = cipher.encrypt_packet(response.to_bytes())
+                await ws.send_bytes(encrypted_response)
+            except Exception as e:
+                logger.error(f"Error sending success response to {client_addr}: {e}")
+                if target_writer:
+                    target_writer.close()
+                    await target_writer.wait_closed()
+                return
 
             logger.info(f"WebSocket connected: {client_addr} -> {address}")
 
@@ -166,16 +266,22 @@ class WebSocketHandler:
             async def relay_to_target():
                 try:
                     while not ws.closed:
-                        msg = await ws.receive()
-                        if msg.type == aiohttp.WSMsgType.BINARY:
-                            payload, _ = cipher.decrypt_packet(msg.data)
-                            if payload:
-                                target_writer.write(payload)
-                                await target_writer.drain()
-                        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                            break
+                        try:
+                            data = await ws_adapter.read(65536)
+                            try:
+                                payload, _ = cipher.decrypt_packet(data)
+                                if payload:
+                                    target_writer.write(payload)
+                                    await target_writer.drain()
+                            except Exception as e:
+                                logger.debug(f"Error decrypting message from {client_addr}: {e}")
+                                break
+                        except RuntimeError as e:
+                            if "closed" in str(e):
+                                break
+                            raise
                 except Exception as e:
-                    logger.debug(f"Error relaying to target: {e}")
+                    logger.debug(f"Error relaying to target for {client_addr}: {e}")
 
             async def relay_to_client():
                 try:
@@ -183,23 +289,37 @@ class WebSocketHandler:
                         data = await target_reader.read(65536)
                         if not data:
                             break
-                        encrypted = cipher.encrypt_packet(data)
-                        await ws.send_bytes(encrypted)
+                        try:
+                            encrypted = cipher.encrypt_packet(data)
+                            await ws_adapter.write(encrypted)
+                        except Exception as e:
+                            logger.debug(f"Error encrypting message for {client_addr}: {e}")
+                            break
                 except Exception as e:
-                    logger.debug(f"Error relaying to client: {e}")
+                    logger.debug(f"Error relaying to client for {client_addr}: {e}")
 
             # Run relay tasks
-            await asyncio.gather(relay_to_target(), relay_to_client())
+            try:
+                await asyncio.gather(relay_to_target(), relay_to_client())
+            except Exception as e:
+                logger.debug(f"Error in relay tasks for {client_addr}: {e}")
 
-        except asyncio.TimeoutError:
-            response = Response.error(ReplyCode.TTL_EXPIRED)
-            encrypted_response = cipher.encrypt_packet(response.to_bytes())
-            await ws.send_bytes(encrypted_response)
         except Exception as e:
-            logger.error(f"Error handling WebSocket connect: {e}")
-            response = Response.error(ReplyCode.GENERAL_FAILURE)
-            encrypted_response = cipher.encrypt_packet(response.to_bytes())
-            await ws.send_bytes(encrypted_response)
+            logger.error(f"Error handling WebSocket connect for {client_addr}: {e}")
+            try:
+                response = Response.error(ReplyCode.GENERAL_FAILURE)
+                encrypted_response = cipher.encrypt_packet(response.to_bytes())
+                await ws.send_bytes(encrypted_response)
+            except Exception as send_error:
+                logger.debug(f"Error sending error response: {send_error}")
+        finally:
+            # Clean up
+            if target_writer:
+                try:
+                    target_writer.close()
+                    await target_writer.wait_closed()
+                except Exception as e:
+                    logger.debug(f"Error closing target writer: {e}")
 
     async def _handle_udp_associate(self, ws: web.WebSocketResponse, cipher: AEADCipher, 
                                    address: Address, client_addr: str) -> None:
@@ -214,35 +334,72 @@ class WebSocketHandler:
         """
         try:
             # Check access
-            if not await self._connection_handler.check_access(client_addr, address):
-                response = Response.error(ReplyCode.CONNECTION_NOT_ALLOWED)
+            try:
+                if not await self._connection_handler.check_access(client_addr, address):
+                    response = Response.error(ReplyCode.CONNECTION_NOT_ALLOWED)
+                    encrypted_response = cipher.encrypt_packet(response.to_bytes())
+                    await ws_adapter.write(encrypted_response)
+                    return
+            except Exception as e:
+                logger.error(f"Error checking access for {client_addr} -> {address}: {e}")
+                response = Response.error(ReplyCode.GENERAL_FAILURE)
                 encrypted_response = cipher.encrypt_packet(response.to_bytes())
-                await ws.send_bytes(encrypted_response)
+                await ws_adapter.write(encrypted_response)
                 return
 
             # Get UDP server port
-            udp_port = self._connection_handler.udp_server_port
-            if udp_port == 0:
+            try:
+                udp_port = self._connection_handler.udp_server_port
+                if udp_port == 0:
+                    logger.warning(f"UDP server not available for {client_addr}")
+                    response = Response.error(ReplyCode.GENERAL_FAILURE)
+                    encrypted_response = cipher.encrypt_packet(response.to_bytes())
+                    await ws_adapter.write(encrypted_response)
+                    return
+            except Exception as e:
+                logger.error(f"Error getting UDP server port for {client_addr}: {e}")
                 response = Response.error(ReplyCode.GENERAL_FAILURE)
                 encrypted_response = cipher.encrypt_packet(response.to_bytes())
-                await ws.send_bytes(encrypted_response)
+                await ws_adapter.write(encrypted_response)
                 return
 
             # Create bind address
-            bind_address = Address(host="0.0.0.0", port=udp_port, addr_type=address.addr_type)
+            try:
+                bind_address = Address(host="0.0.0.0", port=udp_port, addr_type=address.addr_type)
+            except Exception as e:
+                logger.error(f"Error creating bind address for {client_addr}: {e}")
+                response = Response.error(ReplyCode.GENERAL_FAILURE)
+                encrypted_response = cipher.encrypt_packet(response.to_bytes())
+                await ws_adapter.write(encrypted_response)
+                return
 
             # Send success response
-            response = Response.success(bind_address)
-            encrypted_response = cipher.encrypt_packet(response.to_bytes())
-            await ws.send_bytes(encrypted_response)
+            try:
+                response = Response.success(bind_address)
+                encrypted_response = cipher.encrypt_packet(response.to_bytes())
+                await ws_adapter.write(encrypted_response)
+            except Exception as e:
+                logger.error(f"Error sending success response to {client_addr}: {e}")
+                response = Response.error(ReplyCode.GENERAL_FAILURE)
+                encrypted_response = cipher.encrypt_packet(response.to_bytes())
+                await ws_adapter.write(encrypted_response)
+                return
 
             logger.info(f"WebSocket UDP associate established: {client_addr} -> UDP port {udp_port}")
 
             # Keep connection alive for UDP association
-            await asyncio.sleep(300)  # 5 minutes timeout
+            try:
+                await asyncio.sleep(300)  # 5 minutes timeout
+            except asyncio.CancelledError:
+                logger.debug(f"UDP association timeout cancelled for {client_addr}")
+            except Exception as e:
+                logger.debug(f"Error during UDP association for {client_addr}: {e}")
 
         except Exception as e:
-            logger.error(f"Error handling WebSocket UDP associate: {e}")
-            response = Response.error(ReplyCode.GENERAL_FAILURE)
-            encrypted_response = cipher.encrypt_packet(response.to_bytes())
-            await ws.send_bytes(encrypted_response)
+            logger.error(f"Error handling WebSocket UDP associate for {client_addr}: {e}")
+            try:
+                response = Response.error(ReplyCode.GENERAL_FAILURE)
+                encrypted_response = cipher.encrypt_packet(response.to_bytes())
+                await ws.send_bytes(encrypted_response)
+            except Exception as send_error:
+                logger.debug(f"Error sending error response: {send_error}")

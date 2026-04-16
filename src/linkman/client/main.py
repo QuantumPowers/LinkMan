@@ -62,8 +62,9 @@ class Client:
             server_port=config.client.server_port,
             mode_manager=self._mode_manager,
             tls_enabled=config.tls.enabled,
-            websocket_enabled=getattr(config.tls, 'websocket_enabled', False),  # Use websocket_enabled from config
+            websocket_enabled=config.tls.websocket_enabled,
             websocket_path=config.tls.websocket_path,
+            protocol="shadowsocks2022",
         )
 
         # Initialize proxy manager
@@ -134,12 +135,19 @@ class Client:
         loop = asyncio.get_event_loop()
         stop_event = asyncio.Event()
 
-        def signal_handler():
-            logger.info("Received shutdown signal")
-            stop_event.set()
+        # Only set up signal handlers in the main thread
+        import threading
+        if threading.current_thread() is threading.main_thread():
+            def signal_handler():
+                logger.info("Received shutdown signal")
+                stop_event.set()
 
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, signal_handler)
+            try:
+                for sig in (signal.SIGINT, signal.SIGTERM):
+                    loop.add_signal_handler(sig, signal_handler)
+            except ValueError:
+                # Signal handlers can only be set in the main thread
+                logger.debug("Signal handlers not available in this thread")
 
         try:
             await stop_event.wait()
@@ -208,8 +216,22 @@ def main() -> None:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Log level",
     )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Start GUI interface",
+    )
 
     args = parser.parse_args()
+
+    # If GUI flag is set or no command line arguments provided, start GUI
+    if args.gui or len(sys.argv) == 1:
+        import subprocess
+        
+        # Start GUI in a separate process to avoid terminal blocking
+        # This ensures that starting the client only opens the GUI and doesn't perform any other operations
+        subprocess.Popen([sys.executable, "-m", "linkman.client.gui.app"])
+        return
 
     setup_logger(level=args.log_level)
 

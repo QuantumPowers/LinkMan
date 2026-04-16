@@ -77,7 +77,7 @@ class Server:
         )
 
         self._auth_manager = AuthManager(
-            default_allow=True,
+            default_allow=False,
         )
 
         cipher_type = AEADType(config.crypto.cipher)
@@ -103,6 +103,7 @@ class Server:
             key=key_manager.master_key,
             cipher_type=cipher_type,
             connection_handler=self._connection_handler,
+            auth_manager=self._auth_manager,
         )
         self._websocket_app = None
         self._websocket_server = None
@@ -201,7 +202,7 @@ class Server:
                 app.add_routes([web.get(websocket_path, self._websocket_handler.handle_websocket)])
                 
                 # Start WebSocket server on a different port
-                websocket_port = self._config.server.port + 1
+                websocket_port = self._config.server.port + 2
                 runner = web.AppRunner(app)
                 await runner.setup()
                 site = web.TCPSite(runner, self._config.server.host, websocket_port, ssl_context=ssl_context)

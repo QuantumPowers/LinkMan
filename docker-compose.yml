@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  linkman-server:
+    build: .
+    container_name: linkman-server
+    ports:
+      - "8388:8388"  # Main server port
+      - "8443:8443"  # WebSocket port
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./metrics:/app/metrics
+    environment:
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    networks:
+      - linkman-network
+
+  linkman-client:
+    build: .
+    container_name: linkman-client
+    ports:
+      - "1080:1080"  # SOCKS5 proxy port
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./metrics:/app/metrics
+    environment:
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    networks:
+      - linkman-network
+    depends_on:
+      - linkman-server
+
+networks:
+  linkman-network:
+    driver: bridge
+    name: linkman-network

@@ -69,7 +69,7 @@ class AuthManager:
         ip_whitelist: list[str] | None = None,
         ip_blacklist: list[str] | None = None,
         access_rules: list[AccessRule] | None = None,
-        default_allow: bool = True,
+        default_allow: bool = False,
     ):
         """
         Initialize auth manager.
@@ -79,7 +79,7 @@ class AuthManager:
             ip_whitelist: List of allowed IP networks
             ip_blacklist: List of blocked IP networks
             access_rules: List of access rules
-            default_allow: Default allow policy
+            default_allow: Default allow policy (default: False for security)
         """
         self._allowed_identities = set(allowed_identities or [])
         self._ip_whitelist = self._parse_networks(ip_whitelist or [])

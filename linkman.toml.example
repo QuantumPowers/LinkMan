@@ -43,3 +43,7 @@ cert_file = ""
 key_file = ""
 domain = "your-domain.com"  # 替换为你的域名
 websocket_path = "/api/ws"  # 伪装成API路径
+websocket_enabled = true
+
+# 协议设置
+protocol = "shadowsocks2022"  # 支持的协议：shadowsocks2022

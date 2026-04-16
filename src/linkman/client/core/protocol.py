@@ -23,8 +23,10 @@ from linkman.shared.protocol.types import (
     Request,
     Response,
 )
+from linkman.shared.protocol.abstract import ProtocolBase
 from linkman.shared.errors import wrap_error, NetworkError, CryptoError
 from linkman.shared.utils.logger import get_logger
+from linkman.client.core.connection_adapters import ConnectionAdapter, TcpConnectionAdapter, WebSocketConnectionAdapter
 
 if TYPE_CHECKING:
     from linkman.client.proxy.local import LocalProxy
@@ -32,7 +34,7 @@ if TYPE_CHECKING:
 logger = get_logger("client.protocol")
 
 
-class ClientProtocol:
+class ClientProtocol(ProtocolBase):
     """
     Client-side protocol handler for Shadowsocks 2022.
 
@@ -44,10 +46,15 @@ class ClientProtocol:
     5. Receive response
     6. Relay data bidirectionally
     """
+    
+    # ProtocolBase abstract methods are implemented below
 
     HANDSHAKE_TIMEOUT = 30
-    BUFFER_SIZE = 131072  # Increased buffer size for better performance
-
+    MIN_BUFFER_SIZE = 8192  # Minimum buffer size (8KB)
+    MAX_BUFFER_SIZE = 262144  # Maximum buffer size (256KB)
+    DEFAULT_BUFFER_SIZE = 131072  # Default buffer size (128KB)
+    BUFFER_ADJUSTMENT_FACTOR = 1.5  # Buffer size adjustment factor
+    
     def __init__(
         self,
         key: bytes,
@@ -69,12 +76,14 @@ class ClientProtocol:
         self._key = key
         self._cipher_type = cipher_type
         self._tls_enabled = tls_enabled
-        self._websocket_enabled = websocket_enabled
-        self._websocket_path = websocket_path
+
+        # 创建连接适配器
+        if websocket_enabled and tls_enabled:
+            self._connection_adapter: ConnectionAdapter = WebSocketConnectionAdapter(websocket_path)
+        else:
+            self._connection_adapter = TcpConnectionAdapter()
 
         self._cipher: AEADCipher | None = None
-        self._reader: asyncio.StreamReader | None = None
-        self._writer: asyncio.StreamWriter | None = None
         self._target_reader: asyncio.StreamReader | None = None
         self._target_writer: asyncio.StreamWriter | None = None
         self._is_connected = False
@@ -82,6 +91,9 @@ class ClientProtocol:
         self._start_time = 0.0
         self._bytes_sent = 0
         self._bytes_received = 0
+        self._buffer_size = self.DEFAULT_BUFFER_SIZE  # Current buffer size
+        self._last_buffer_adjustment = 0.0  # Time of last buffer adjustment
+        self._packet_count = 0  # Number of packets processed
 
     @property
     def is_connected(self) -> bool:
@@ -131,7 +143,7 @@ class ClientProtocol:
 
                 # Create SSL context if TLS is enabled
                 ssl_context = None
-                if hasattr(self, '_tls_enabled') and self._tls_enabled:
+                if self._tls_enabled:
                     import ssl
                     ssl_context = ssl.create_default_context()
                     # Don't verify certificate for now (can be configured later)
@@ -141,45 +153,13 @@ class ClientProtocol:
                     ssl_context.min_version = ssl.TLSVersion.TLSv1_2
                     logger.info("TLS enabled for client connection")
 
-                # Use WebSocket if enabled
-                if hasattr(self, '_websocket_enabled') and self._websocket_enabled:
-                    import aiohttp
-                    
-                    # Create WebSocket connection
-                    # WebSocket uses port + 1
-                    websocket_port = server_port + 1
-                    ws_url = f"{'wss' if self._tls_enabled else 'ws'}://{server_host}:{websocket_port}{self._websocket_path}"
-                    logger.info(f"Connecting to WebSocket at {ws_url}")
-                    
-                    session = aiohttp.ClientSession()
-                    try:
-                        self._websocket = await asyncio.wait_for(
-                            session.ws_connect(
-                                ws_url,
-                                ssl=ssl_context,
-                                timeout=self.HANDSHAKE_TIMEOUT,
-                            ),
-                            timeout=self.HANDSHAKE_TIMEOUT,
-                        )
-                        logger.info("WebSocket connection established")
-                    except Exception as e:
-                        await session.close()
-                        raise e
-                else:
-                    # Use regular TCP connection
-                    self._reader, self._writer = await asyncio.wait_for(
-                        asyncio.open_connection(server_host, server_port, ssl=ssl_context),
-                        timeout=self.HANDSHAKE_TIMEOUT,
-                    )
+                # 使用连接适配器建立连接
+                await self._connection_adapter.connect(server_host, server_port, ssl_context)
 
                 client_salt = secrets.token_bytes(16)
                 
-                # Send salt based on connection type
-                if hasattr(self, '_websocket_enabled') and self._websocket_enabled:
-                    await self._websocket.send_bytes(client_salt)
-                else:
-                    self._writer.write(client_salt)
-                    await self._writer.drain()
+                # 发送salt
+                await self._connection_adapter.write(client_salt)
 
                 self._cipher = AEADCipher(self._cipher_type, self._key, client_salt)
 
@@ -207,15 +187,11 @@ class ClientProtocol:
                 
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay)
-                    # Close any partially established connection
-                    if self._writer:
-                        try:
-                            self._writer.close()
-                            await self._writer.wait_closed()
-                        except Exception as close_error:
-                            logger.debug(f"Error closing connection: {close_error}")
-                    self._reader = None
-                    self._writer = None
+                    # 关闭连接
+                    try:
+                        await self._connection_adapter.close()
+                    except Exception as close_error:
+                        logger.debug(f"Error closing connection: {close_error}")
                     self._cipher = None
                 else:
                     break
@@ -254,6 +230,35 @@ class ClientProtocol:
             except asyncio.CancelledError:
                 pass
 
+    def _adjust_buffer_size(self, packet_size: int) -> None:
+        """
+        Adjust buffer size based on packet size and network conditions.
+        
+        Args:
+            packet_size: Size of the current packet
+        """
+        current_time = time.time()
+        
+        # Adjust buffer size every 100 packets or 10 seconds
+        if self._packet_count % 100 == 0 or current_time - self._last_buffer_adjustment > 10:
+            # Only adjust if packet size is significantly different from current buffer size
+            if packet_size > self._buffer_size * 0.8:
+                # Increase buffer size if packet is close to buffer size
+                # Gradual increase to avoid memory spikes
+                new_size = min(int(self._buffer_size * 1.2), self.MAX_BUFFER_SIZE)
+                if new_size != self._buffer_size:
+                    logger.debug(f"Increasing buffer size from {self._buffer_size} to {new_size}")
+                    self._buffer_size = new_size
+            elif packet_size < self._buffer_size * 0.2 and self._buffer_size > self.MIN_BUFFER_SIZE:
+                # Decrease buffer size if packet is much smaller than buffer size
+                # Gradual decrease to avoid frequent adjustments
+                new_size = max(int(self._buffer_size * 0.8), self.MIN_BUFFER_SIZE)
+                if new_size != self._buffer_size:
+                    logger.debug(f"Decreasing buffer size from {self._buffer_size} to {new_size}")
+                    self._buffer_size = new_size
+            
+            self._last_buffer_adjustment = current_time
+
     async def _relay_upstream(self) -> None:
         """Relay data from local to server with optimized performance."""
         if self._cipher is None or self._target_reader is None:
@@ -262,9 +267,13 @@ class ClientProtocol:
         try:
             total_sent = 0
             while not self._is_closed:
-                data = await self._target_reader.read(self.BUFFER_SIZE)
+                data = await self._target_reader.read(self._buffer_size)
                 if not data:
                     break
+
+                # Adjust buffer size based on packet size
+                self._adjust_buffer_size(len(data))
+                self._packet_count += 1
 
                 # Optimize: write encrypted data in one go
                 await self._write_encrypted(data)
@@ -272,11 +281,8 @@ class ClientProtocol:
                 total_sent += len(data)
                 
                 # Drain only when we have significant data to write
-                if total_sent >= self.BUFFER_SIZE * 2:
-                    # For WebSocket, no need to drain
-                    if not (hasattr(self, '_websocket_enabled') and self._websocket_enabled):
-                        if self._writer:
-                            await self._writer.drain()
+                if total_sent >= self._buffer_size * 2:
+                    # 只有需要drain的连接才调用drain
                     total_sent = 0
 
         except asyncio.CancelledError:
@@ -294,26 +300,19 @@ class ClientProtocol:
             buffer = b""
             total_received = 0
             while not self._is_closed:
-                # Handle WebSocket connection
-                if hasattr(self, '_websocket_enabled') and self._websocket_enabled and hasattr(self, '_websocket'):
-                    msg = await self._websocket.receive()
-                    if msg.type == self._websocket.MSG_BINARY:
-                        chunk = msg.data
-                    elif msg.type in (self._websocket.MSG_CLOSED, self._websocket.MSG_ERROR):
-                        if buffer:
-                            logger.debug("Incomplete packet when closing connection")
-                        break
-                    else:
-                        continue
-                else:
-                    # Handle regular TCP connection
-                    if self._reader is None:
-                        break
-                    chunk = await self._reader.read(self.BUFFER_SIZE)
+                # 使用连接适配器读取数据
+                try:
+                    chunk = await self._connection_adapter.read(self._buffer_size)
                     if not chunk:
                         if buffer:
                             logger.debug("Incomplete packet when closing connection")
                         break
+                except RuntimeError as e:
+                    if "closed" in str(e):
+                        if buffer:
+                            logger.debug("Incomplete packet when closing connection")
+                        break
+                    raise
 
                 buffer += chunk
                 
@@ -322,6 +321,10 @@ class ClientProtocol:
                     try:
                         payload, buffer = self._cipher.decrypt_packet(buffer)
                         if payload:
+                            # Adjust buffer size based on packet size
+                            self._adjust_buffer_size(len(payload))
+                            self._packet_count += 1
+                            
                             self._target_writer.write(payload)
                             self._bytes_received += len(payload)
                             total_received += len(payload)
@@ -330,7 +333,7 @@ class ClientProtocol:
                         break
                 
                 # Drain only when we have significant data to write
-                if total_received >= self.BUFFER_SIZE * 2:
+                if total_received >= self._buffer_size * 2:
                     await self._target_writer.drain()
                     total_received = 0
 
@@ -345,39 +348,27 @@ class ClientProtocol:
         if self._cipher is None:
             raise ProtocolError("Not connected")
 
-        # Handle WebSocket connection
-        if hasattr(self, '_websocket_enabled') and self._websocket_enabled and hasattr(self, '_websocket'):
-            while True:
-                msg = await self._websocket.receive()
-                if msg.type == self._websocket.MSG_BINARY:
-                    try:
-                        payload, _ = self._cipher.decrypt_packet(msg.data)
-                        return payload
-                    except ValueError:
-                        continue
-                elif msg.type in (self._websocket.MSG_CLOSED, self._websocket.MSG_ERROR):
-                    raise ProtocolError("WebSocket connection closed")
-        else:
-            # Handle regular TCP connection
-            if self._reader is None:
-                raise ProtocolError("Not connected")
+        buffer = b""
 
-            buffer = b""
-
-            while True:
-                chunk = await self._reader.read(self.BUFFER_SIZE)
+        while True:
+            try:
+                chunk = await self._connection_adapter.read(self._buffer_size)
                 if not chunk:
                     if buffer:
                         raise ProtocolError("Incomplete packet")
                     return b""
+            except RuntimeError as e:
+                if "closed" in str(e):
+                    raise ProtocolError("Connection closed")
+                raise
 
-                buffer += chunk
+            buffer += chunk
 
-                try:
-                    payload, buffer = self._cipher.decrypt_packet(buffer)
-                    return payload
-                except ValueError:
-                    continue
+            try:
+                payload, buffer = self._cipher.decrypt_packet(buffer)
+                return payload
+            except ValueError:
+                continue
 
     async def _write_encrypted(self, data: bytes) -> None:
         """Encrypt and write data to server."""
@@ -386,15 +377,8 @@ class ClientProtocol:
 
         encrypted = self._cipher.encrypt_packet(data)
 
-        # Handle WebSocket connection
-        if hasattr(self, '_websocket_enabled') and self._websocket_enabled and hasattr(self, '_websocket'):
-            await self._websocket.send_bytes(encrypted)
-        else:
-            # Handle regular TCP connection
-            if self._writer is None:
-                raise ProtocolError("Not connected")
-            self._writer.write(encrypted)
-            await self._writer.drain()
+        # 使用连接适配器写入数据
+        await self._connection_adapter.write(encrypted)
 
     async def close(self) -> None:
         """Close the connection."""
@@ -410,17 +394,11 @@ class ClientProtocol:
             f"recv: {self._bytes_received}, duration: {duration:.1f}s)"
         )
 
-        # Close WebSocket connection
-        if hasattr(self, '_websocket_enabled') and self._websocket_enabled and hasattr(self, '_websocket'):
-            await self._websocket.close()
-        else:
-            # Close regular TCP connection
-            if self._writer:
-                self._writer.close()
-                try:
-                    await self._writer.wait_closed()
-                except Exception:
-                    pass
+        # 使用连接适配器关闭连接
+        try:
+            await self._connection_adapter.close()
+        except Exception:
+            pass
 
         if self._target_writer:
             self._target_writer.close()
