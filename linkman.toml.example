@@ -1,18 +1,25 @@
 # ============================================================
-# LinkMan VPN - Client Configuration Template
+# LinkMan VPN Configuration
 # ============================================================
-# Copy this file to ~/.linkman/client_config.toml or use
-# the GUI to configure and save settings.
+# Both client and server share the same config format.
+# Fill in the sections you need and ignore the rest.
 #
-# Server deployment: see linkman.server.toml
-# GUI mode:           linkman-client (or: linkman-client --gui)
-# CLI mode:           linkman-client -c linkman.toml
+# Server:  linkman-server -c linkman.toml
+# Client:  linkman-client -c linkman.toml
+# GUI:     just start linkman-client, it opens the GUI
 # ============================================================
+
+[server]
+host = "0.0.0.0"
+port = 8388
+management_port = 8389
+max_connections = 1024
+connection_timeout = 300
+buffer_size = 65536
 
 [client]
 local_host = "127.0.0.1"
 local_port = 1080
-# Server IP/hostname from the deployed server node
 server_host = "your-server-ip"
 server_port = 8388
 connection_timeout = 30
@@ -20,7 +27,7 @@ buffer_size = 65536
 
 [crypto]
 cipher = "chacha20-poly1305"
-# Paste the key generated on the server (linkman-server --generate-key)
+# Generate with: linkman-server --generate-key
 key = ""
 identity = ""
 
@@ -43,8 +50,6 @@ backup_count = 5
 format = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}"
 
 [tls]
-# Enable TLS + WebSocket for traffic obfuscation
-# (server must also have tls.enabled = true)
 enabled = false
 cert_file = ""
 key_file = ""
