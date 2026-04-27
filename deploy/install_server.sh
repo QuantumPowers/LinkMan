@@ -86,9 +86,29 @@ log "Done."
 # ---------- Step 7: Nginx (optional) ----------
 step "[7/7] Nginx"
 if command -v nginx &> /dev/null; then
-    cp "${APP_DIR}/deploy/nginx.conf" /etc/nginx/sites-available/linkman
-    ln -sf /etc/nginx/sites-available/linkman /etc/nginx/sites-enabled/linkman 2>/dev/null || true
-    nginx -t && systemctl reload nginx && log "Nginx configured." || warn "nginx -t failed, check nginx.conf."
+    NGINX_SITE="/etc/nginx/sites-available/linkman"
+    CERT_FILE="/etc/ssl/certs/linkman-selfsigned.crt"
+    KEY_FILE="/etc/ssl/private/linkman-selfsigned.key"
+
+    if [ ! -f "${CERT_FILE}" ] || [ ! -f "${KEY_FILE}" ]; then
+        log "Generating self-signed certificate..."
+        mkdir -p /etc/ssl/private /etc/ssl/certs
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout "${KEY_FILE}" \
+            -out "${CERT_FILE}" \
+            -subj "/CN=$(hostname)" 2>/dev/null
+    fi
+
+    cp "${APP_DIR}/deploy/nginx.conf" "${NGINX_SITE}"
+    ln -sf "${NGINX_SITE}" /etc/nginx/sites-enabled/linkman 2>/dev/null || true
+    if nginx -t 2>/dev/null; then
+        systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null
+        log "Nginx configured and running."
+    else
+        warn "nginx -t failed — removing linkman site to keep nginx healthy."
+        rm -f /etc/nginx/sites-enabled/linkman
+        log "Removed linkman nginx config. Fix the issue and re-run the script."
+    fi
 else
     log "Nginx not installed. Skipped."
 fi
