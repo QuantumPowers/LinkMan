@@ -26,7 +26,7 @@ from linkman.shared.protocol.types import (
 from linkman.shared.protocol.abstract import ProtocolBase
 from linkman.shared.errors import wrap_error, NetworkError, CryptoError
 from linkman.shared.utils.logger import get_logger
-from linkman.client.core.connection_adapters import ConnectionAdapter, TcpConnectionAdapter, WebSocketConnectionAdapter
+from linkman.client.core.connection_adapters import ConnectionAdapter, TcpConnectionAdapter, WebSocketConnectionAdapter, PooledTcpConnectionAdapter
 
 if TYPE_CHECKING:
     from linkman.client.proxy.local import LocalProxy
@@ -62,24 +62,16 @@ class ClientProtocol(ProtocolBase):
         tls_enabled: bool = False,
         websocket_enabled: bool = False,
         websocket_path: str = "/linkman",
+        connection_pool=None,
     ):
-        """
-        Initialize client protocol.
-
-        Args:
-            key: Server encryption key
-            cipher_type: AEAD cipher type
-            tls_enabled: Whether to use TLS
-            websocket_enabled: Whether to use WebSocket
-            websocket_path: WebSocket path
-        """
         self._key = key
         self._cipher_type = cipher_type
         self._tls_enabled = tls_enabled
 
-        # 创建连接适配器
         if websocket_enabled and tls_enabled:
             self._connection_adapter: ConnectionAdapter = WebSocketConnectionAdapter(websocket_path)
+        elif connection_pool is not None:
+            self._connection_adapter = PooledTcpConnectionAdapter(connection_pool)
         else:
             self._connection_adapter = TcpConnectionAdapter()
 

@@ -59,8 +59,12 @@ pytest_cache/
 
 # Deployment scripts (may contain sensitive information)
 restore_proxy.sh
-deploy/*.sh
 
 # Temporary files
 /tmp
 /temp
+
+# Database files
+data/*.db
+data/*.db-wal
+data/*.db-shm

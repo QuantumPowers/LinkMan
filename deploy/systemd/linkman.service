@@ -20,7 +20,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/linkman/data /opt/linkman/logs
+ReadWritePaths=/opt/linkman/data /opt/linkman/logs /opt/linkman/metrics
 ReadOnlyPaths=/etc/ssl/certs
 
 # Resource limits

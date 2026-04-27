@@ -6,7 +6,7 @@ services:
     container_name: linkman-server
     ports:
       - "8388:8388"  # Main server port
-      - "8443:8443"  # WebSocket port
+      - "8390:8390"  # WebSocket port (server port + 2)
     volumes:
       - ./config:/app/config
       - ./logs:/app/logs

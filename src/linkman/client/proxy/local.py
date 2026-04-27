@@ -49,21 +49,8 @@ class LocalProxy:
         websocket_enabled: bool = False,
         websocket_path: str = "/linkman",
         protocol: str = "shadowsocks2022",
+        connection_pool=None,
     ):
-        """
-        Initialize local proxy.
-
-        Args:
-            key: 加密密钥
-            cipher_type: AEAD加密类型
-            server_host: 远程服务器主机
-            server_port: 远程服务器端口
-            mode_manager: 可选的路由模式管理器
-            tls_enabled: 是否使用TLS
-            websocket_enabled: 是否使用WebSocket
-            websocket_path: WebSocket路径
-            protocol: 协议名称
-        """
         self._key = key
         self._cipher_type = cipher_type
         self._server_host = server_host
@@ -73,6 +60,7 @@ class LocalProxy:
         self._websocket_enabled = websocket_enabled
         self._websocket_path = websocket_path
         self._protocol = protocol
+        self._connection_pool = connection_pool
 
         self._server = None  # 服务器实例
         self._running = False  # 是否正在运行
@@ -225,6 +213,7 @@ class LocalProxy:
                     tls_enabled=self._tls_enabled,
                     websocket_enabled=self._websocket_enabled,
                     websocket_path=self._websocket_path,
+                    connection_pool=self._connection_pool,
                 )
                 await protocol.connect(
                     self._server_host,

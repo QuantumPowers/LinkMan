@@ -23,6 +23,7 @@ from linkman.shared.crypto.keys import KeyManager
 from linkman.shared.utils.config import Config
 from linkman.shared.utils.logger import get_logger, setup_logger
 from linkman.shared.utils.cert import generate_cert_if_missing
+from linkman.shared.utils.db import get_db, close_db
 from linkman.server.core.handler import ConnectionHandler
 from linkman.server.core.session import SessionManager
 from linkman.server.core.udp import UDPServer
@@ -138,6 +139,8 @@ class Server:
 
         logger.info("Starting LinkMan server...")
 
+        await get_db()
+
         await self._session_manager.start()
         await self._device_manager.start()
         await self._traffic_manager.start()
@@ -246,6 +249,8 @@ class Server:
         await self._traffic_manager.stop()
         await self._device_manager.stop()
         await self._session_manager.stop()
+
+        await close_db()
 
         logger.info("Server stopped")
 

@@ -30,7 +30,7 @@ LinkMan consists of the following components:
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.11+
 - pip
 
 ### Install from Source
@@ -62,58 +62,52 @@ pip install linkman-vpn
    linkman-server generate-key
    ```
 
-2. **Create a configuration file** (`server_config.json`):
-   ```json
-   {
-     "server": {
-       "host": "0.0.0.0",
-       "port": 8388
-     },
-     "crypto": {
-       "key": "your-master-key-here",
-       "cipher": "aes-256-gcm"
-     },
-     "tls": {
-       "enabled": true,
-       "cert_file": "server.crt",
-       "key_file": "server.key",
-       "websocket_enabled": true,
-       "websocket_path": "/linkman"
-     }
-   }
+2. **Create a configuration file** (`linkman.toml`):
+   ```toml
+   [server]
+   host = "0.0.0.0"
+   port = 8388
+
+   [crypto]
+   key = "your-master-key-here"
+   cipher = "aes-256-gcm"
+
+   [tls]
+   enabled = true
+   cert_file = "server.crt"
+   key_file = "server.key"
+   websocket_enabled = true
+   websocket_path = "/linkman"
    ```
 
 3. **Start the server**:
    ```bash
-   linkman-server start --config server_config.json
+   linkman-server -c linkman.toml
    ```
 
 ### Client Setup
 
-1. **Create a configuration file** (`client_config.json`):
-   ```json
-   {
-     "client": {
-       "local_host": "127.0.0.1",
-       "local_port": 1080,
-       "server_host": "your-server-ip",
-       "server_port": 8388
-     },
-     "crypto": {
-       "key": "your-master-key-here",
-       "cipher": "aes-256-gcm"
-     },
-     "tls": {
-       "enabled": true,
-       "websocket_enabled": true,
-       "websocket_path": "/linkman"
-     }
-   }
+1. **Create a configuration file** (`linkman.toml`):
+   ```toml
+   [client]
+   local_host = "127.0.0.1"
+   local_port = 1080
+   server_host = "your-server-ip"
+   server_port = 8388
+
+   [crypto]
+   key = "your-master-key-here"
+   cipher = "aes-256-gcm"
+
+   [tls]
+   enabled = true
+   websocket_enabled = true
+   websocket_path = "/linkman"
    ```
 
 2. **Start the client**:
    ```bash
-   linkman-client start --config client_config.json
+   linkman-client -c linkman.toml
    ```
 
 ### Configuration Options

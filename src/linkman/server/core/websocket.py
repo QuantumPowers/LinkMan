@@ -154,9 +154,9 @@ class WebSocketHandler:
                             try:
                                 request = Request.from_bytes(payload)
                                 if request.command == Command.CONNECT:
-                                    await self._handle_connect(ws, cipher, request.address, client_addr)
+                                    await self._handle_connect(ws, ws_adapter, cipher, request.address, client_addr)
                                 elif request.command == Command.UDP_ASSOCIATE:
-                                    await self._handle_udp_associate(ws, cipher, request.address, client_addr)
+                                    await self._handle_udp_associate(ws, ws_adapter, cipher, request.address, client_addr)
                                 else:
                                     logger.warning(f"Unknown command: {request.command}")
                                     response = Response.error(ReplyCode.COMMAND_NOT_SUPPORTED)
@@ -200,7 +200,7 @@ class WebSocketHandler:
 
         return ws
 
-    async def _handle_connect(self, ws: web.WebSocketResponse, cipher: AEADCipher, 
+    async def _handle_connect(self, ws: web.WebSocketResponse, ws_adapter, cipher: AEADCipher, 
                              address: Address, client_addr: str) -> None:
         """
         Handle CONNECT command over WebSocket.
@@ -321,7 +321,7 @@ class WebSocketHandler:
                 except Exception as e:
                     logger.debug(f"Error closing target writer: {e}")
 
-    async def _handle_udp_associate(self, ws: web.WebSocketResponse, cipher: AEADCipher, 
+    async def _handle_udp_associate(self, ws: web.WebSocketResponse, ws_adapter, cipher: AEADCipher, 
                                    address: Address, client_addr: str) -> None:
         """
         Handle UDP ASSOCIATE command over WebSocket.

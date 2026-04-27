@@ -6,14 +6,18 @@ Provides:
 - Device management
 - Traffic statistics
 - Configuration
+- Rate limiting
 """
 
 from __future__ import annotations
 
+import time
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -24,9 +28,35 @@ if TYPE_CHECKING:
     from linkman.server.manager.monitor import Monitor
 
 
-class StatusResponse(BaseModel):
-    """Status response model."""
+class RateLimiter:
+    """Simple in-memory token bucket rate limiter."""
 
+    def __init__(self, requests_per_minute: int = 60):
+        self._rate = requests_per_minute
+        self._window = 60.0
+        self._buckets: dict[str, list[float]] = defaultdict(list)
+
+    def _cleanup(self, client_ip: str, now: float) -> None:
+        window_start = now - self._window
+        self._buckets[client_ip] = [
+            t for t in self._buckets[client_ip] if t > window_start
+        ]
+        if not self._buckets[client_ip]:
+            del self._buckets[client_ip]
+
+    def is_allowed(self, client_ip: str) -> bool:
+        now = time.time()
+        self._cleanup(client_ip, now)
+        if len(self._buckets.get(client_ip, [])) >= self._rate:
+            return False
+        self._buckets[client_ip].append(now)
+        return True
+
+
+_rate_limiter = RateLimiter(requests_per_minute=120)
+
+
+class StatusResponse(BaseModel):
     status: str
     uptime: float
     uptime_str: str
@@ -37,8 +67,6 @@ class StatusResponse(BaseModel):
 
 
 class TrafficResponse(BaseModel):
-    """Traffic response model."""
-
     total_mb: float
     total_gb: float
     limit_mb: int
@@ -47,8 +75,6 @@ class TrafficResponse(BaseModel):
 
 
 class DeviceResponse(BaseModel):
-    """Device response model."""
-
     device_id: str
     name: str
     status: str
@@ -57,16 +83,12 @@ class DeviceResponse(BaseModel):
 
 
 class DeviceListResponse(BaseModel):
-    """Device list response model."""
-
     total: int
     online: int
     devices: list[DeviceResponse]
 
 
 class ConfigUpdateRequest(BaseModel):
-    """Config update request model."""
-
     key: str
     value: str
 
@@ -78,19 +100,6 @@ def create_app(
     traffic_manager: "TrafficManager | None" = None,
     monitor: "Monitor | None" = None,
 ) -> FastAPI:
-    """
-    Create FastAPI application.
-
-    Args:
-        connection_handler: Connection handler instance
-        session_manager: Session manager instance
-        device_manager: Device manager instance
-        traffic_manager: Traffic manager instance
-        monitor: Monitor instance
-
-    Returns:
-        FastAPI application
-    """
     app = FastAPI(
         title="LinkMan Server API",
         description="Management API for LinkMan VPN Server",
@@ -105,9 +114,19 @@ def create_app(
         allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
     )
 
+    @app.middleware("http")
+    async def rate_limit_middleware(request: Request, call_next):
+        client_ip = request.client.host if request.client else "unknown"
+        path = request.url.path
+        if path.startswith("/api/") and not _rate_limiter.is_allowed(client_ip):
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many requests. Please try again later."},
+            )
+        return await call_next(request)
+
     @app.get("/", tags=["Root"])
     async def root():
-        """Root endpoint."""
         return {
             "name": "LinkMan Server",
             "version": "1.0.0",
@@ -116,7 +135,6 @@ def create_app(
 
     @app.get("/api/status", response_model=StatusResponse, tags=["Status"])
     async def get_status():
-        """Get server status."""
         if not monitor:
             raise HTTPException(status_code=503, detail="Monitor not available")
 
@@ -133,7 +151,6 @@ def create_app(
 
     @app.get("/api/status/full", tags=["Status"])
     async def get_full_status():
-        """Get full server status."""
         if not monitor:
             raise HTTPException(status_code=503, detail="Monitor not available")
 
@@ -141,7 +158,6 @@ def create_app(
 
     @app.get("/api/traffic", response_model=TrafficResponse, tags=["Traffic"])
     async def get_traffic():
-        """Get traffic statistics."""
         if not traffic_manager:
             raise HTTPException(status_code=503, detail="Traffic manager not available")
 
@@ -156,35 +172,31 @@ def create_app(
 
     @app.get("/api/traffic/report", tags=["Traffic"])
     async def get_traffic_report():
-        """Get detailed traffic report."""
         if not traffic_manager:
             raise HTTPException(status_code=503, detail="Traffic manager not available")
 
         return traffic_manager.get_stats()
 
     @app.get("/api/traffic/top", tags=["Traffic"])
-async def get_top_clients(limit: int = 10):
-    """Get top clients by traffic."""
-    if not traffic_manager:
-        raise HTTPException(status_code=503, detail="Traffic manager not available")
+    async def get_top_clients(limit: int = 10):
+        if not traffic_manager:
+            raise HTTPException(status_code=503, detail="Traffic manager not available")
 
-    # Validate limit parameter
-    if limit < 1 or limit > 100:
-        raise HTTPException(status_code=400, detail="Limit must be between 1 and 100")
+        if limit < 1 or limit > 100:
+            raise HTTPException(status_code=400, detail="Limit must be between 1 and 100")
 
-    top = traffic_manager.get_top_clients(limit)
-    return [
-        {
-            "client_id": cid,
-            "total_mb": round(stats.total_mb, 2),
-            "total_gb": round(stats.total_gb, 3),
-        }
-        for cid, stats in top
-    ]
+        top = traffic_manager.get_top_clients(limit)
+        return [
+            {
+                "client_id": cid,
+                "total_mb": round(stats.total_mb, 2),
+                "total_gb": round(stats.total_gb, 3),
+            }
+            for cid, stats in top
+        ]
 
     @app.get("/api/devices", response_model=DeviceListResponse, tags=["Devices"])
     async def get_devices():
-        """Get all devices."""
         if not device_manager:
             raise HTTPException(status_code=503, detail="Device manager not available")
 
@@ -205,39 +217,34 @@ async def get_top_clients(limit: int = 10):
         )
 
     @app.get("/api/devices/{device_id}", tags=["Devices"])
-async def get_device(device_id: str):
-    """Get device by ID."""
-    if not device_manager:
-        raise HTTPException(status_code=503, detail="Device manager not available")
+    async def get_device(device_id: str):
+        if not device_manager:
+            raise HTTPException(status_code=503, detail="Device manager not available")
 
-    # Validate device_id format
-    if not device_id or len(device_id) > 50 or not device_id.isalnum():
-        raise HTTPException(status_code=400, detail="Invalid device ID format. Must be alphanumeric and less than 50 characters.")
+        if not device_id or len(device_id) > 50 or not device_id.isalnum():
+            raise HTTPException(status_code=400, detail="Invalid device ID format. Must be alphanumeric and less than 50 characters.")
 
-    device = device_manager.get_device(device_id)
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
+        device = device_manager.get_device(device_id)
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
 
-    return device.to_dict()
+        return device.to_dict()
 
     @app.delete("/api/devices/{device_id}", tags=["Devices"])
-async def remove_device(device_id: str):
-    """Remove a device."""
-    if not device_manager:
-        raise HTTPException(status_code=503, detail="Device manager not available")
+    async def remove_device(device_id: str):
+        if not device_manager:
+            raise HTTPException(status_code=503, detail="Device manager not available")
 
-    # Validate device_id format
-    if not device_id or len(device_id) > 50 or not device_id.isalnum():
-        raise HTTPException(status_code=400, detail="Invalid device ID format. Must be alphanumeric and less than 50 characters.")
+        if not device_id or len(device_id) > 50 or not device_id.isalnum():
+            raise HTTPException(status_code=400, detail="Invalid device ID format. Must be alphanumeric and less than 50 characters.")
 
-    if not device_manager.unregister_device(device_id):
-        raise HTTPException(status_code=404, detail="Device not found")
+        if not device_manager.unregister_device(device_id):
+            raise HTTPException(status_code=404, detail="Device not found")
 
-    return {"status": "removed", "device_id": device_id}
+        return {"status": "removed", "device_id": device_id}
 
     @app.get("/api/sessions", tags=["Sessions"])
     async def get_sessions():
-        """Get active sessions."""
         if not session_manager:
             raise HTTPException(status_code=503, detail="Session manager not available")
 
@@ -249,7 +256,6 @@ async def remove_device(device_id: str):
 
     @app.get("/api/sessions/stats", tags=["Sessions"])
     async def get_session_stats():
-        """Get session statistics."""
         if not session_manager:
             raise HTTPException(status_code=503, detail="Session manager not available")
 
@@ -257,7 +263,6 @@ async def remove_device(device_id: str):
 
     @app.get("/api/connections", tags=["Connections"])
     async def get_connections():
-        """Get connection statistics."""
         if not connection_handler:
             raise HTTPException(status_code=503, detail="Connection handler not available")
 

@@ -19,6 +19,7 @@ from linkman.shared.crypto.aead import AEADType
 from linkman.shared.crypto.keys import KeyManager
 from linkman.shared.utils.config import Config
 from linkman.shared.utils.logger import get_logger, setup_logger
+from linkman.shared.utils.connection_pool import ConnectionPool, ConnectionPoolManager
 from linkman.client.proxy.local import LocalProxy
 from linkman.client.proxy.modes import ModeManager, ProxyMode
 from linkman.client.rules.matcher import RuleMatcher
@@ -65,15 +66,40 @@ class Client:
             websocket_enabled=config.tls.websocket_enabled,
             websocket_path=config.tls.websocket_path,
             protocol="shadowsocks2022",
+            connection_pool=self._create_connection_pool(config),
         )
 
-        # Initialize proxy manager
         self._proxy_manager = ProxyManager(
             host=config.client.local_host,
             port=config.client.local_port
         )
 
         self._running = False
+
+    def _create_connection_pool(self, config: Config):
+        if config.tls.websocket_enabled and config.tls.enabled:
+            return None
+
+        async def create_conn():
+            import ssl as ssl_module
+            ssl_context = None
+            if config.tls.enabled:
+                ssl_context = ssl_module.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl_module.CERT_NONE
+                ssl_context.min_version = ssl_module.TLSVersion.TLSv1_2
+            return await asyncio.wait_for(
+                asyncio.open_connection(
+                    config.client.server_host, config.client.server_port, ssl=ssl_context
+                ),
+                timeout=30,
+            )
+
+        pool = ConnectionPool(
+            create_connection=create_conn,
+            max_connections=config.server.max_connections // 2 if config.server.max_connections else 50,
+        )
+        return pool
 
     @property
     def config(self) -> Config:
@@ -96,6 +122,10 @@ class Client:
             return
 
         logger.info("Starting LinkMan client...")
+
+        pool = self._proxy._connection_pool
+        if pool is not None:
+            await pool.start()
 
         await self._proxy.start(
             self._config.client.local_host,
@@ -123,6 +153,10 @@ class Client:
 
         # Restore system proxy
         self._proxy_manager.restore_proxy()
+
+        pool = self._proxy._connection_pool
+        if pool is not None:
+            await pool.stop()
 
         self._running = False
 
